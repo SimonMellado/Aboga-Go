@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<!-- Creado por LimónStudioss. s.melladoo -->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel interno — ABOGA GO</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="brand"><img src="assets/logo-abogago.jpeg" alt="AbogaGo SpA" style="height:38px; width:38px; object-fit:cover; border-radius:8px;"> Panel Admin</div>
+  <div class="nav-links">
+    <a href="index.html" class="nav-btn ghost">← Volver al sitio</a>
+  </div>
+</nav>
+
+<div id="admin-gate" style="display:flex; min-height:70vh; align-items:center; justify-content:center; padding:20px;">
+  <div class="card" style="max-width:400px; width:100%; padding:28px; text-align:center;">
+    <div class="eyebrow" style="color:var(--brass-dark); margin-bottom:8px; justify-content:center;">Acceso restringido</div>
+    <h3 style="margin-bottom:10px;">Panel Admin</h3>
+    <p id="admin-gate-msg" style="font-size:13.5px; color:var(--ink-soft);">Verificando sesión…</p>
+    <a href="index.html?admin=1" id="admin-gate-link" class="btn btn-ink btn-sm hidden" style="margin-top:16px;">Ir a iniciar sesión</a>
+  </div>
+</div>
+
+<section id="view-admin" class="hidden">
+  <div class="app-shell">
+    <div class="app-head">
+      <div>
+        <h1>Panel de administración</h1>
+        <div class="sub">Gestión de usuarios, verificación y causas activas.</div>
+      </div>
+    </div>
+
+    <div class="tabbar">
+      <div class="tab active" data-adm="usuarios" onclick="setAdminTab('usuarios')">Usuarios</div>
+      <div class="tab" data-adm="verificacion" onclick="setAdminTab('verificacion')">Verificación abogados</div>
+      <div class="tab" data-adm="causas" onclick="setAdminTab('causas')">Causas activas</div>
+      <div class="tab" data-adm="creditos" onclick="setAdminTab('creditos')">Créditos</div>
+    </div>
+
+    <div id="admin-usuarios" class="card"></div>
+    <div id="admin-verificacion" class="card hidden"></div>
+    <div id="admin-causas" class="card hidden"></div>
+    <div id="admin-creditos" class="card hidden"></div>
+  </div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<footer>© 2026 <strong>ABOGA GO</strong> — Panel interno. Solo para uso del equipo.</footer>
+
+<script src="js/api.js"></script>
+<script src="js/admin.js"></script>
+<script src="js/animations.js"></script>
+</body>
+</html>
