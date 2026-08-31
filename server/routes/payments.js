@@ -77,9 +77,10 @@ function transferBankData() {
 
 
 function requireTransbank(req, res, next) {
-  if (process.env.NODE_ENV === 'production' && !transbankEnabled()) return res.status(503).json({ error: 'Transbank estará disponible próximamente. Usa Flow o transferencia.' });
+  if (!transbankEnabled()) return res.status(503).json({ error: 'Webpay / Transbank estará disponible próximamente. Usa Flow o transferencia.' });
   next();
 }
+
 
 function requireChile(req, res, next) {
   const country = String(req.body?.country || 'CL').toUpperCase();
@@ -178,8 +179,8 @@ router.get('/metodos', (_req, res) => {
   res.json({
     country: 'CL',
     methods: {
-      webpay: { enabled: true, label: 'Tarjeta débito, crédito o prepago', provider: 'Transbank Webpay', country: 'CL' },
-      oneclick: { enabled: true, label: 'Tarjeta para plan mensual', provider: 'Transbank Oneclick', country: 'CL' },
+      webpay: { enabled: false, comingSoon: true, label: 'Webpay · Próximamente', provider: 'Transbank Webpay', country: 'CL' },
+      oneclick: { enabled: false, comingSoon: true, label: 'Oneclick · Próximamente', provider: 'Transbank Oneclick', country: 'CL' },
       flow: { enabled: flowConfig().configured, label: 'Flow', provider: 'Flow Chile', country: 'CL', automaticConfirmation: true },
       transfer: { enabled: transferBankData().configured, label: 'Transferencia bancaria', country: 'CL', bank: transferBankData(), automaticReconciliation: transferAutomationConfigured(), rutMatchRequired: true }
     }
