@@ -29,7 +29,19 @@ function requireProductionEnv() {
 
 requireProductionEnv();
 const app = express();
-if (process.env.NODE_ENV === 'production') app.set('trust proxy', Math.max(1, Number(process.env.TRUST_PROXY_HOPS || 1)));
+
+function resolveTrustProxyHops() {
+  const raw = String(process.env.TRUST_PROXY_HOPS || '1').trim();
+  const hops = Number.parseInt(raw, 10);
+  if (!Number.isInteger(hops) || hops < 1 || hops > 10) {
+    throw new Error('TRUST_PROXY_HOPS debe ser un entero entre 1 y 10');
+  }
+  return hops;
+}
+
+const trustProxyHops = resolveTrustProxyHops();
+app.set('trust proxy', trustProxyHops);
+console.log(`Express trust proxy configurado en ${trustProxyHops} salto(s)`);
 const extraOrigins = String(process.env.ALLOWED_ORIGINS || '').split(',').map(v => v.trim().replace(/\/$/, '')).filter(Boolean);
 const configuredFrontend = String(process.env.FRONTEND_URL || 'https://abogago.online').trim().replace(/\/$/, '');
 const allowedOrigins = new Set([
@@ -92,7 +104,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.13', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.14', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);
