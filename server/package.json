@@ -1,8 +1,8 @@
 {
   "name": "aboga-go-api",
-  "version": "6.10.17",
+  "version": "6.10.18",
   "private": true,
-  "description": "Backend ABOGA GO V6.10.17 — códigos por Resend HTTPS, índices Mongoose corregidos, Render trust proxy, Flow y pagos automatizados",
+  "description": "Backend ABOGA GO V6.10.18 — códigos por Resend HTTPS, índices Mongoose corregidos, Render trust proxy, Flow y pagos automatizados",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
