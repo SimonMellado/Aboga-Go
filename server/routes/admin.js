@@ -191,7 +191,7 @@ router.get('/compras', requireStaff('creador', 'admin'), async (req, res) => {
     return {
       id: p._id,
       source: 'card',
-      method: p.provider === 'oneclick' ? 'Oneclick' : 'Webpay',
+      method: p.provider === 'oneclick' ? 'Oneclick' : p.provider === 'flow' ? 'Flow' : 'Webpay',
       provider: p.provider || (p.kind === 'pack' ? 'webpay' : 'oneclick'),
       user: p.user || null,
       kind: p.kind,
@@ -271,7 +271,7 @@ router.get('/compras/:source/:id/json', requireStaff('creador', 'admin'), async 
     return res.json({
       compra: {
         id: payment._id,
-        metodo: payment.provider === 'oneclick' ? 'Oneclick' : 'Webpay',
+        metodo: payment.provider === 'oneclick' ? 'Oneclick' : payment.provider === 'flow' ? 'Flow' : 'Webpay',
         proveedor: payment.provider || 'transbank',
         estado: payment.status,
         montoCLP: payment.clpAmount,
@@ -293,6 +293,11 @@ router.get('/compras/:source/:id/json', requireStaff('creador', 'admin'), async 
         fechaTransaccion: verification.transactionDate || null,
         fechaVerificacion: verification.verifiedAt || null,
         ordenCompra: payment.buyOrder || null,
+        ordenFlow: payment.flowOrder || null,
+        tokenFlowRegistrado: Boolean(payment.flowToken),
+        pagadorFlow: verification.payerEmail || null,
+        medioPagoFlow: verification.paymentMedia || null,
+        moneda: verification.currency || 'CLP',
         nota: payment.status === 'approved' && !verification.verified ? 'Compra histórica aprobada antes de guardar evidencia detallada del proveedor.' : null
       }
     });

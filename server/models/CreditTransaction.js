@@ -12,9 +12,11 @@ const creditTransactionSchema = new mongoose.Schema({
 
   buyOrder: { type: String, index: true },
   webpayToken: { type: String, index: true },
+  flowToken: { type: String, index: true },
+  flowOrder: { type: Number, index: true },
 
   status: { type: String, enum: ['pending', 'processing', 'approved', 'failed'], default: 'pending' },
-  provider: { type: String, enum: ['webpay', 'oneclick', 'admin'], default: undefined },
+  provider: { type: String, enum: ['webpay', 'oneclick', 'flow', 'admin'], default: undefined },
   providerVerification: {
     verified: { type: Boolean, default: false },
     verifiedAt: Date,
@@ -25,7 +27,11 @@ const creditTransactionSchema = new mongoose.Schema({
     cardLast4: { type: String, default: '' },
     installmentsNumber: { type: Number, default: undefined },
     transactionDate: Date,
-    amount: { type: Number, default: undefined }
+    amount: { type: Number, default: undefined },
+    providerOrder: { type: String, default: '' },
+    payerEmail: { type: String, default: '' },
+    paymentMedia: { type: String, default: '' },
+    currency: { type: String, default: 'CLP' }
   },
 
   createdAt: { type: Date, default: Date.now },
@@ -33,5 +39,6 @@ const creditTransactionSchema = new mongoose.Schema({
 
 creditTransactionSchema.index({ buyOrder: 1 }, { unique: true, sparse: true });
 creditTransactionSchema.index({ webpayToken: 1 }, { unique: true, sparse: true });
+creditTransactionSchema.index({ flowToken: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('CreditTransaction', creditTransactionSchema);

@@ -15,6 +15,7 @@ const {
   CREDIT_PRICE, CREDIT_PACKS, PLANS, matchesCatalogProduct,
   webpayPlusTx, oneclickInscriptionTx, oneclickChargeTx, oneclickCommerceCode,
 } = require('../config/transbank');
+const { flowConfig, createFlowPayment, getFlowPaymentStatus } = require('../config/flow');
 
 
 const transferUploadDir = path.join(__dirname, '..', 'private_uploads', 'transfers');
@@ -64,14 +65,14 @@ function providerVerificationFromOneclick(detail) {
 
 function transferBankData() {
   const data = {
-    bankName: process.env.TRANSFER_BANK_NAME || '',
-    accountType: process.env.TRANSFER_ACCOUNT_TYPE || '',
-    accountNumber: process.env.TRANSFER_ACCOUNT_NUMBER || '',
-    holder: process.env.TRANSFER_ACCOUNT_HOLDER || '',
-    rut: process.env.TRANSFER_RUT || '',
-    email: process.env.TRANSFER_EMAIL || ''
+    bankName: 'Banco Falabella',
+    accountType: 'Cuenta Corriente',
+    accountNumber: '19844105645',
+    holder: 'Camila MOLINA',
+    rut: '19.698.680-4',
+    email: 'molinacifuentescamila@gmail.com'
   };
-  return { ...data, configured: Boolean(data.bankName && data.accountNumber && data.holder && data.rut) };
+  return { ...data, configured: true };
 }
 
 function requireChile(req, res, next) {
@@ -173,6 +174,7 @@ router.get('/metodos', (_req, res) => {
     methods: {
       webpay: { enabled: true, label: 'Tarjeta débito, crédito o prepago', provider: 'Transbank Webpay', country: 'CL' },
       oneclick: { enabled: true, label: 'Tarjeta para plan mensual', provider: 'Transbank Oneclick', country: 'CL' },
+      flow: { enabled: flowConfig().configured, label: 'Flow', provider: 'Flow Chile', country: 'CL', automaticConfirmation: true },
       transfer: { enabled: transferBankData().configured, label: 'Transferencia bancaria', country: 'CL', bank: transferBankData(), automaticReconciliation: transferAutomationConfigured(), rutMatchRequired: true }
     }
   });
@@ -253,6 +255,170 @@ router.post('/transfer/:id/comprobante', requireAuth, requireRole('abogado'), tr
   payment.status = 'under_review';
   await payment.save();
   res.json({ ok: true, status: payment.status, reference: payment.reference });
+});
+
+
+function flowVerification(status) {
+  const paymentData = status?.paymentData || {};
+  const paid = Number(status?.status) === 2;
+  return {
+    verified: paid,
+    verifiedAt: new Date(),
+    providerStatus: paid ? 'PAID' : ({ 1: 'PENDING', 3: 'REJECTED', 4: 'CANCELLED' }[Number(status?.status)] || String(status?.status || '')),
+    responseCode: Number.isFinite(Number(status?.status)) ? Number(status.status) : undefined,
+    authorizationCode: String(paymentData?.autorizationCode || paymentData?.authorizationCode || ''),
+    paymentTypeCode: String(paymentData?.mediaType || paymentData?.media || ''),
+    cardLast4: String(paymentData?.cardLast4Numbers || '').slice(-4),
+    installmentsNumber: Number.isFinite(Number(paymentData?.installments)) ? Number(paymentData.installments) : undefined,
+    transactionDate: paymentData?.date ? new Date(paymentData.date.replace(' ', 'T')) : new Date(),
+    amount: Number.isFinite(Number(status?.amount)) ? Number(status.amount) : undefined,
+    providerOrder: String(status?.flowOrder || ''),
+    payerEmail: String(status?.payer || ''),
+    paymentMedia: String(paymentData?.media || ''),
+    currency: String(status?.currency || 'CLP')
+  };
+}
+
+async function applyFlowStatus(token) {
+  const status = await getFlowPaymentStatus(token);
+  const record = await CreditTransaction.findOne({ flowToken: token });
+  if (!record) return { status, record: null, applied: false, reason: 'not_found' };
+  if (record.status === 'approved') return { status, record, applied: true, duplicate: true };
+
+  const catalogKind = record.kind === 'pack' ? 'credit_pack' : 'plan';
+  const productId = record.productId || record.plan;
+  const catalogOk = matchesCatalogProduct(catalogKind, productId, record.clpAmount, record.credits);
+  const amountOk = Number(status.amount) === Number(record.clpAmount);
+  const orderOk = String(status.commerceOrder || '') === String(record.buyOrder || '');
+  const verification = flowVerification(status);
+
+  if (!catalogOk || !amountOk || !orderOk) {
+    await CreditTransaction.updateOne({ _id: record._id, status: { $ne: 'approved' } }, { $set: { status: 'failed', provider: 'flow', providerVerification: verification, flowOrder: status.flowOrder } });
+    return { status, record, applied: false, reason: 'integrity_mismatch' };
+  }
+  if (Number(status.status) !== 2) {
+    const nextStatus = [3, 4].includes(Number(status.status)) ? 'failed' : 'pending';
+    await CreditTransaction.updateOne({ _id: record._id, status: { $ne: 'approved' } }, { $set: { status: nextStatus, provider: 'flow', providerVerification: verification, flowOrder: status.flowOrder } });
+    return { status, record, applied: false, reason: nextStatus };
+  }
+
+  const claimed = await CreditTransaction.findOneAndUpdate(
+    { _id: record._id, status: 'pending' },
+    { $set: { status: 'processing', provider: 'flow', providerVerification: verification, flowOrder: status.flowOrder } },
+    { new: true }
+  );
+  if (!claimed) {
+    const fresh = await CreditTransaction.findById(record._id);
+    return { status, record: fresh, applied: fresh?.status === 'approved', duplicate: true };
+  }
+
+  const user = await User.findById(claimed.user);
+  if (!user) {
+    claimed.status = 'failed';
+    await claimed.save();
+    return { status, record: claimed, applied: false, reason: 'user_not_found' };
+  }
+  if (claimed.kind === 'pack') {
+    user.credits += claimed.credits;
+  } else {
+    const now = new Date();
+    const end = new Date(now); end.setDate(end.getDate() + 30);
+    user.credits += claimed.credits;
+    user.premium = { active: true, tier: claimed.plan || claimed.productId, planStart: now, planEnd: end, autoRenew: false };
+  }
+  await user.save();
+  claimed.status = 'approved';
+  claimed.provider = 'flow';
+  claimed.providerVerification = verification;
+  claimed.flowOrder = status.flowOrder;
+  await claimed.save();
+  await Notification.create({
+    user: user._id,
+    type: 'account',
+    title: 'Pago Flow confirmado',
+    message: claimed.kind === 'pack' ? `Se agregaron ${claimed.credits} créditos a tu cuenta.` : `Tu plan ${claimed.plan === 'pro' ? 'Premium Pro' : 'Premium'} fue activado por 30 días.`,
+    linkView: 'abogado'
+  });
+  return { status, record: claimed, applied: true };
+}
+
+router.post('/flow/create', requireAuth, requireRole('abogado'), requireChile, async (req, res) => {
+  if (!flowConfig().configured) return res.status(503).json({ error: 'Flow todavía no está configurado en producción' });
+  const kind = String(req.body.kind || 'credit_pack');
+  const productId = String(req.body.productId || '');
+  let product, transactionKind, plan;
+  if (kind === 'credit_pack') {
+    product = getCreditPack(productId);
+    transactionKind = 'pack';
+  } else if (kind === 'plan') {
+    product = getPlan(productId);
+    transactionKind = 'plan_inicial';
+    plan = product?.id;
+  }
+  if (!product) return res.status(400).json({ error: 'Producto de pago no válido' });
+
+  const commerceOrder = `FLOW-${kind === 'plan' ? 'PLAN' : 'CR'}-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+  const record = await CreditTransaction.create({
+    user: req.user._id,
+    kind: transactionKind,
+    plan,
+    productId: product.id,
+    credits: product.credits,
+    clpAmount: product.price,
+    buyOrder: commerceOrder,
+    status: 'pending',
+    provider: 'flow'
+  });
+  try {
+    const result = await createFlowPayment({
+      commerceOrder,
+      subject: `ABOGA GO · ${product.name}`,
+      amount: product.price,
+      email: req.user.email,
+      urlConfirmation: `${process.env.BACKEND_URL}/api/payments/flow/confirm`,
+      urlReturn: `${process.env.BACKEND_URL}/api/payments/flow/return`,
+      optional: { productId: product.id, kind, userId: String(req.user._id) }
+    });
+    record.flowToken = result.token;
+    record.flowOrder = Number(result.flowOrder) || undefined;
+    await record.save();
+    return res.json({
+      url: `${String(result.url || '').replace(/\/$/, '')}?token=${encodeURIComponent(result.token)}`,
+      token: result.token,
+      flowOrder: result.flowOrder,
+      product: { id: product.id, name: product.name, price: product.price, credits: product.credits }
+    });
+  } catch (err) {
+    record.status = 'failed';
+    await record.save();
+    console.error('Error creando pago Flow:', err.message);
+    return res.status(502).json({ error: 'No se pudo iniciar el pago con Flow' });
+  }
+});
+
+router.post('/flow/confirm', async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  if (!token) return res.status(400).send('token requerido');
+  try {
+    await applyFlowStatus(token);
+    return res.status(200).send('OK');
+  } catch (err) {
+    console.error('Error confirmando Flow:', err.message);
+    return res.status(500).send('ERROR');
+  }
+});
+
+router.all('/flow/return', async (req, res) => {
+  const token = String(req.body?.token || req.query?.token || '').trim();
+  if (!token) return res.redirect(`${process.env.FRONTEND_URL}/index.html?flow=fallido`);
+  try {
+    const result = await applyFlowStatus(token);
+    const state = result.applied ? 'exitoso' : (Number(result.status?.status) === 1 ? 'pendiente' : 'fallido');
+    return res.redirect(`${process.env.FRONTEND_URL}/index.html?flow=${state}`);
+  } catch (err) {
+    console.error('Error retorno Flow:', err.message);
+    return res.redirect(`${process.env.FRONTEND_URL}/index.html?flow=fallido`);
+  }
 });
 
 router.post('/credits/init', requireAuth, requireRole('abogado'), requireChile, async (req, res) => {

@@ -307,6 +307,9 @@ async function initSesion() {
   if (params.get('pago') === 'procesando') toast('Pago recibido. Estamos terminando de acreditar tus créditos.');
   if (params.get('plan') === 'exitoso') toast('Plan activado correctamente.');
   if (params.get('pago') === 'fallido' || params.get('plan') === 'fallido') toast('El pago no fue aprobado.');
+  if (params.get('flow') === 'exitoso') toast('Pago Flow confirmado. Tu compra ya fue acreditada.');
+  if (params.get('flow') === 'pendiente') toast('Pago Flow pendiente de confirmación. Se acreditará automáticamente cuando Flow lo confirme.');
+  if (params.get('flow') === 'fallido') toast('El pago con Flow no fue aprobado.');
   const requestedView = params.get('view');
   if (requestedView && ['landing','casos','cliente','abogado','cuenta'].includes(requestedView)) setTimeout(() => switchView(requestedView), 0);
   const section = params.get('section');
@@ -519,7 +522,7 @@ function setPlanSelection(tier) {
   if (total) total.textContent = fmtMoney(plan.price);
   if (desc) desc.textContent = `${plan.name} · ${plan.credits} créditos mensuales`;
   const btn = document.getElementById('plan-continue-btn');
-  if (btn) btn.textContent = selectedPlanPaymentMethod === 'transfer' ? `Transferir por ${plan.name}` : `Continuar con ${plan.name}`;
+  if (btn) btn.textContent = selectedPlanPaymentMethod === 'transfer' ? `Transferir por ${plan.name}` : selectedPlanPaymentMethod === 'flow' ? `Pagar ${plan.name} con Flow` : `Continuar con ${plan.name}`;
 }
 
 let selectedCreditPaymentMethod = 'webpay';
@@ -530,7 +533,7 @@ function setCreditPaymentMethod(method) {
   selectedCreditPaymentMethod = method;
   document.querySelectorAll('[data-credit-method]').forEach(b => b.classList.toggle('active', b.dataset.creditMethod === method));
   const btn = document.getElementById('credit-pay-btn');
-  if (btn) btn.textContent = method === 'transfer' ? 'Generar datos para transferencia' : 'Pagar con tarjeta · Webpay';
+  if (btn) btn.textContent = method === 'transfer' ? 'Generar datos para transferencia' : method === 'flow' ? 'Pagar con Flow' : 'Pagar con tarjeta · Webpay';
   document.getElementById('credit-transfer-box')?.classList.toggle('hidden', method !== 'transfer');
 }
 function setPlanPaymentMethod(method) {
@@ -538,14 +541,25 @@ function setPlanPaymentMethod(method) {
   document.querySelectorAll('[data-plan-method]').forEach(b => b.classList.toggle('active', b.dataset.planMethod === method));
   const btn = document.getElementById('plan-continue-btn');
   const plan = precios.plans?.[selectedPlan];
-  if (btn && plan) btn.textContent = method === 'transfer' ? `Transferir por ${plan.name}` : `Continuar con ${plan.name}`;
+  if (btn && plan) btn.textContent = method === 'transfer' ? `Transferir por ${plan.name}` : method === 'flow' ? `Pagar ${plan.name} con Flow` : `Continuar con ${plan.name}`;
   document.getElementById('plan-transfer-box')?.classList.toggle('hidden', method !== 'transfer');
 }
 
 async function comprarCreditosDesdePanel() {
   if (selectedCreditPaymentMethod === 'transfer') return iniciarTransferencia('credit_pack', selectedCreditPack, 'credit-transfer-box');
+  if (selectedCreditPaymentMethod === 'flow') return iniciarFlow('credit_pack', selectedCreditPack);
   try { const { url, token } = await apiPost('/payments/credits/init', { packId: selectedCreditPack, country: 'CL' }); postRedirect(url, { token_ws: token }); }
   catch (e) { toast(e.error || 'No se pudo iniciar el pago'); }
+}
+
+async function iniciarFlow(kind, productId) {
+  try {
+    const data = await apiPost('/payments/flow/create', { kind, productId, country: 'CL' });
+    if (!data?.url) throw { error: 'Flow no entregó una URL de pago' };
+    window.location.href = data.url;
+  } catch (e) {
+    toast(e.error || 'No se pudo iniciar el pago con Flow');
+  }
 }
 
 async function iniciarTransferencia(kind, productId, targetId) {
@@ -578,7 +592,7 @@ async function subirComprobanteTransferencia(paymentId) {
 }
 function renderPremiumCard() { const box = document.getElementById('premium-status'); const badge = document.getElementById('account-plan-badge'); if (!box) return; const p = currentUser.premium; const active = Boolean(p?.active && p?.planEnd && new Date(p.planEnd).getTime() > Date.now()); if (active) { badge.textContent = p.tier === 'pro' ? '🏆 Premium Pro' : '★ Premium'; badge.className = `plan-badge ${p.tier === 'pro' ? 'plan-pro' : 'plan-premium'}`; const renewal = p.autoRenew === false ? `Finaliza: ${fmtDate(p.planEnd)} · sin renovación automática.` : `Próxima renovación: ${fmtDate(p.planEnd)}.`; box.innerHTML = `<div class="premium-active-box"><strong>Plan activo</strong><p>Prioridad de ${precios.priorityHours || 24} horas. ${renewal}</p>${p.autoRenew === false ? '' : '<button class="btn btn-outline btn-sm btn-dark-outline" onclick="cancelarRenovacion()">Cancelar renovación automática</button>'}</div>`; } else { badge.textContent = 'Plan gratuito'; badge.className = 'plan-badge plan-standard'; box.innerHTML = '<div class="premium-smallprint">Las oportunidades nuevas permanecen reservadas durante 24 horas. Si nadie las toma, se habilitan gratis para abogados verificados.</div>'; } }
 async function cancelarRenovacion() { if (!confirm('¿Deseas desactivar la renovación automática? Mantendrás Premium hasta la fecha de término.')) return; try { const data = await apiPost('/payments/oneclick/plan/cancelar-renovacion', {}); currentUser = await getCurrentUser(); toast(data.message || 'Renovación automática desactivada'); renderPremiumCard(); } catch (e) { toast(e.error || 'No se pudo cancelar la renovación'); } }
-async function contratarPremium(tier = selectedPlan) { const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier, country: 'CL' }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier, country: 'CL' }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
+async function contratarPremium(tier = selectedPlan) { const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); if (selectedPlanPaymentMethod === 'flow') return iniciarFlow('plan', tier); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier, country: 'CL' }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier, country: 'CL' }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
 function irAPagos(tipo = 'creditos') {
   if (!currentUser) return openLoginModal();
   if (currentUser.role !== 'abogado') return toast('Disponible para abogados');

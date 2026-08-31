@@ -21,6 +21,10 @@ function requireProductionEnv() {
   if (String(process.env.SECURITY_PEPPER).length < 48) throw new Error('SECURITY_PEPPER debe tener al menos 48 caracteres en producción');
   if (process.env.SECURITY_PEPPER === process.env.JWT_SECRET) throw new Error('SECURITY_PEPPER debe ser distinto de JWT_SECRET');
   if (!String(process.env.FRONTEND_URL).startsWith('https://') || !String(process.env.BACKEND_URL).startsWith('https://')) throw new Error('FRONTEND_URL y BACKEND_URL deben usar HTTPS en producción');
+  if (String(process.env.FLOW_ENABLED || 'true').toLowerCase() === 'true') {
+    const flowMissing = ['FLOW_API_KEY','FLOW_SECRET_KEY'].filter(k => !String(process.env[k] || '').trim());
+    if (flowMissing.length) throw new Error(`Flow está habilitado y faltan variables: ${flowMissing.join(', ')}`);
+  }
 }
 
 requireProductionEnv();
@@ -69,7 +73,7 @@ const sensitiveLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 25, standa
 const transferWebhookLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiadas confirmaciones de transferencia.' } });
 function mutationOriginGuard(req, res, next) {
   if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) return next();
-  const exempt = ['/api/payments/credits/return','/api/payments/oneclick/inscribir/return','/api/payments/transfer/webhook','/api/auth/apple/callback'];
+  const exempt = ['/api/payments/credits/return','/api/payments/oneclick/inscribir/return','/api/payments/transfer/webhook','/api/payments/flow/confirm','/api/payments/flow/return','/api/auth/apple/callback'];
   if (exempt.includes(req.path)) return next();
   const origin = req.get('origin');
   if (origin && !allowedOrigins.has(origin)) return res.status(403).json({ error: 'Origen no permitido' });
@@ -88,7 +92,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.12', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.13', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);
