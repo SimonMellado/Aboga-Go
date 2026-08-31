@@ -13,7 +13,7 @@ const ManualPayment = require('../models/ManualPayment');
 const Notification = require('../models/Notification');
 const {
   CREDIT_PRICE, CREDIT_PACKS, PLANS, matchesCatalogProduct,
-  webpayPlusTx, oneclickInscriptionTx, oneclickChargeTx, oneclickCommerceCode,
+  webpayPlusTx, oneclickInscriptionTx, oneclickChargeTx, oneclickCommerceCode, transbankEnabled,
 } = require('../config/transbank');
 const { flowConfig, createFlowPayment, getFlowPaymentStatus } = require('../config/flow');
 
@@ -73,6 +73,12 @@ function transferBankData() {
     email: 'molinacifuentescamila@gmail.com'
   };
   return { ...data, configured: true };
+}
+
+
+function requireTransbank(req, res, next) {
+  if (process.env.NODE_ENV === 'production' && !transbankEnabled()) return res.status(503).json({ error: 'Transbank estará disponible próximamente. Usa Flow o transferencia.' });
+  next();
 }
 
 function requireChile(req, res, next) {
@@ -298,48 +304,66 @@ async function applyFlowStatus(token) {
   }
   if (Number(status.status) !== 2) {
     const nextStatus = [3, 4].includes(Number(status.status)) ? 'failed' : 'pending';
-    await CreditTransaction.updateOne({ _id: record._id, status: { $ne: 'approved' } }, { $set: { status: nextStatus, provider: 'flow', providerVerification: verification, flowOrder: status.flowOrder } });
+    await CreditTransaction.updateOne({ _id: record._id, status: { $nin: ['approved', 'processing'] } }, { $set: { status: nextStatus, provider: 'flow', providerVerification: verification, flowOrder: status.flowOrder } });
     return { status, record, applied: false, reason: nextStatus };
   }
 
-  const claimed = await CreditTransaction.findOneAndUpdate(
-    { _id: record._id, status: 'pending' },
-    { $set: { status: 'processing', provider: 'flow', providerVerification: verification, flowOrder: status.flowOrder } },
-    { new: true }
-  );
-  if (!claimed) {
-    const fresh = await CreditTransaction.findById(record._id);
-    return { status, record: fresh, applied: fresh?.status === 'approved', duplicate: true };
+  const session = await mongoose.startSession();
+  let applied = false;
+  let creditedNow = false;
+  let finalRecord = null;
+  try {
+    await session.withTransaction(async () => {
+      const fresh = await CreditTransaction.findOne({ _id: record._id }).session(session);
+      if (!fresh) return;
+      if (fresh.status === 'approved') {
+        finalRecord = fresh;
+        applied = true;
+        return;
+      }
+      if (!['pending', 'processing'].includes(fresh.status)) return;
+      const user = await User.findById(fresh.user).session(session);
+      if (!user) {
+        fresh.status = 'failed';
+        fresh.provider = 'flow';
+        fresh.providerVerification = verification;
+        await fresh.save({ session });
+        finalRecord = fresh;
+        return;
+      }
+
+      if (fresh.kind === 'pack') {
+        user.credits = Number(user.credits || 0) + Number(fresh.credits || 0);
+      } else {
+        const now = new Date();
+        const end = new Date(now); end.setDate(end.getDate() + 30);
+        user.credits = Number(user.credits || 0) + Number(fresh.credits || 0);
+        user.premium = { active: true, tier: fresh.plan || fresh.productId, planStart: now, planEnd: end, autoRenew: false };
+      }
+      await user.save({ session });
+      fresh.status = 'approved';
+      fresh.provider = 'flow';
+      fresh.providerVerification = verification;
+      fresh.flowOrder = status.flowOrder;
+      await fresh.save({ session });
+      finalRecord = fresh;
+      applied = true;
+      creditedNow = true;
+    });
+  } finally {
+    await session.endSession();
   }
 
-  const user = await User.findById(claimed.user);
-  if (!user) {
-    claimed.status = 'failed';
-    await claimed.save();
-    return { status, record: claimed, applied: false, reason: 'user_not_found' };
+  if (creditedNow && finalRecord) {
+    await Notification.create({
+      user: finalRecord.user,
+      type: 'account',
+      title: 'Pago Flow confirmado',
+      message: finalRecord.kind === 'pack' ? `Se agregaron ${finalRecord.credits} créditos a tu cuenta.` : `Tu plan ${finalRecord.plan === 'pro' ? 'Premium Pro' : 'Premium'} fue activado por 30 días.`,
+      linkView: 'abogado'
+    }).catch(() => {});
   }
-  if (claimed.kind === 'pack') {
-    user.credits += claimed.credits;
-  } else {
-    const now = new Date();
-    const end = new Date(now); end.setDate(end.getDate() + 30);
-    user.credits += claimed.credits;
-    user.premium = { active: true, tier: claimed.plan || claimed.productId, planStart: now, planEnd: end, autoRenew: false };
-  }
-  await user.save();
-  claimed.status = 'approved';
-  claimed.provider = 'flow';
-  claimed.providerVerification = verification;
-  claimed.flowOrder = status.flowOrder;
-  await claimed.save();
-  await Notification.create({
-    user: user._id,
-    type: 'account',
-    title: 'Pago Flow confirmado',
-    message: claimed.kind === 'pack' ? `Se agregaron ${claimed.credits} créditos a tu cuenta.` : `Tu plan ${claimed.plan === 'pro' ? 'Premium Pro' : 'Premium'} fue activado por 30 días.`,
-    linkView: 'abogado'
-  });
-  return { status, record: claimed, applied: true };
+  return { status, record: finalRecord || record, applied, duplicate: record.status === 'approved' };
 }
 
 router.post('/flow/create', requireAuth, requireRole('abogado'), requireChile, async (req, res) => {
@@ -421,7 +445,7 @@ router.all('/flow/return', async (req, res) => {
   }
 });
 
-router.post('/credits/init', requireAuth, requireRole('abogado'), requireChile, async (req, res) => {
+router.post('/credits/init', requireAuth, requireRole('abogado'), requireChile, requireTransbank, async (req, res) => {
   const pack = getCreditPack(req.body.packId);
   if (!pack) {
     return res.status(400).json({ error: 'Pack de créditos no válido' });
@@ -481,7 +505,7 @@ router.all('/credits/return', async (req, res) => {
   }
 });
 
-router.post('/oneclick/inscribir', requireAuth, requireRole('abogado'), requireChile, async (req, res) => {
+router.post('/oneclick/inscribir', requireAuth, requireRole('abogado'), requireChile, requireTransbank, async (req, res) => {
   const plan = getPlan(req.body.plan);
   if (!plan) return res.status(400).json({ error: 'Plan no válido' });
 
@@ -556,7 +580,7 @@ router.all('/oneclick/inscribir/return', async (req, res) => {
   }
 });
 
-router.post('/oneclick/plan/activar', requireAuth, requireRole('abogado'), requireChile, async (req, res) => {
+router.post('/oneclick/plan/activar', requireAuth, requireRole('abogado'), requireChile, requireTransbank, async (req, res) => {
   const user = await User.findById(req.user._id);
   const plan = getPlan(req.body.plan);
   if (!plan) return res.status(400).json({ error: 'Plan no válido' });

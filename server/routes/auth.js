@@ -11,16 +11,17 @@ const { requireAuth } = require('../middleware/auth');
 const { recordSecurityEvent, grantSignupBonus } = require('../utils/security');
 
 function issueToken(user) {
-  return jwt.sign({ id: user._id, role: user.role, ver: Number(user.security?.tokenVersion || 0) }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user._id, role: user.role, ver: Number(user.security?.tokenVersion || 0) }, process.env.JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256', issuer: 'abogago-api', audience: 'abogago-web' });
 }
 
 function setAuthCookie(res, user) {
   const token = issueToken(user);
   res.cookie('token', token, {
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/',
   });
 }
 
@@ -43,7 +44,7 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 function isStrongEnoughPassword(password) {
-  return typeof password === 'string' && password.length >= 8 && password.length <= 72;
+  return typeof password === 'string' && password.length >= 10 && password.length <= 72 && /[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(password) && /\d/.test(password);
 }
 function normalizeRut(value) {
   return String(value || '').replace(/[^0-9kK]/g, '').toUpperCase();
@@ -70,8 +71,24 @@ function cleanList(value, maxItems = 12, maxLen = 100) {
   return Array.isArray(value) ? value.map(v => cleanText(v, maxLen)).filter(Boolean).slice(0, maxItems) : [];
 }
 function hashCode(email, code) {
-  return crypto.createHmac('sha256', process.env.JWT_SECRET).update(`${email}:${code}`).digest('hex');
+  return crypto.createHmac('sha256', process.env.SECURITY_PEPPER || process.env.JWT_SECRET).update(`email-code:${email}:${code}`).digest('hex');
 }
+function staffRoleOf(user) {
+  if (!user) return 'none';
+  if (user.staffRole && user.staffRole !== 'none') return user.staffRole;
+  return user.role === 'admin' ? 'admin' : 'none';
+}
+
+async function ensurePrivilegedLawyerAccess(user) {
+  if (!user || !['creador', 'admin'].includes(staffRoleOf(user))) return user;
+  let changed = false;
+  if (user.role !== 'abogado') { user.role = 'abogado'; changed = true; }
+  if (!user.verified) { user.verified = true; changed = true; }
+  if (user.verificationStatus !== 'verified') { user.verificationStatus = 'verified'; changed = true; }
+  if (changed) await user.save();
+  return user;
+}
+
 function publicUser(user) {
   const obj = user.toObject ? user.toObject() : { ...user };
   delete obj.passwordHash;
@@ -130,12 +147,13 @@ router.post('/local/register/request-code', async (req, res) => {
     const lastName = cleanName(req.body.lastName);
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || '');
+    const intendedRole = req.body.accountType === 'abogado' ? 'abogado' : 'cliente';
 
     if (firstName.length < 2) return res.status(400).json({ error: 'Ingresa tu nombre' });
     if (lastName.length < 2) return res.status(400).json({ error: 'Ingresa tu apellido' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Ingresa un correo válido' });
     if (!isStrongEnoughPassword(password)) {
-      return res.status(400).json({ error: 'La contraseña debe tener entre 8 y 72 caracteres' });
+      return res.status(400).json({ error: 'La contraseña debe tener entre 10 y 72 caracteres e incluir letras y números' });
     }
 
     const existing = await User.findOne({ email }).select('+passwordHash');
@@ -161,6 +179,7 @@ router.post('/local/register/request-code', async (req, res) => {
       purpose: 'register',
       firstName,
       lastName,
+      intendedRole,
       passwordHash,
       codeHash: hashCode(email, code),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -227,6 +246,7 @@ router.post('/local/register/verify-code', async (req, res) => {
         providerId: email,
         authProviders: [{ provider: 'local', providerId: email }],
         emailVerified: true,
+        role: record.intendedRole === 'cliente' ? 'cliente' : 'sin_definir',
       });
     } else {
       user.firstName = user.firstName || record.firstName;
@@ -234,6 +254,7 @@ router.post('/local/register/verify-code', async (req, res) => {
       user.name = user.name || `${record.firstName} ${record.lastName}`.trim();
       user.passwordHash = record.passwordHash;
       user.emailVerified = true;
+      if (user.role === 'sin_definir' && record.intendedRole === 'cliente') user.role = 'cliente';
 
       const linked = user.authProviders?.some(p => p.provider === 'local' && p.providerId === email);
       if (!linked) user.authProviders.push({ provider: 'local', providerId: email });
@@ -244,8 +265,10 @@ router.post('/local/register/verify-code', async (req, res) => {
     record.passwordHash = undefined;
     await record.save();
 
+    let bonus = { granted: false, credits: 0, reason: 'not_applicable' };
+    if (record.intendedRole === 'cliente' && user.role === 'cliente' && !user.security?.signupBonusGrantedAt) bonus = await grantSignupBonus({ req, user });
     setAuthCookie(res, user);
-    res.json({ user: publicUser(user), isNew, needsRole: user.role === 'sin_definir' });
+    res.json({ user: publicUser(user), isNew, intendedRole: record.intendedRole, needsRole: user.role === 'sin_definir', bonusGranted: bonus.granted, bonusCredits: bonus.credits, bonusReason: bonus.reason });
   } catch (err) {
     console.error('local register verify-code:', err);
     res.status(500).json({ error: 'No se pudo verificar el código' });
@@ -256,6 +279,7 @@ router.post('/local/login', async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     const password = String(req.body.password || '');
+    const portal = ['cliente', 'abogado'].includes(req.body.portal) ? req.body.portal : '';
 
     if (!isValidEmail(email) || !password) {
       return res.status(400).json({ error: 'Ingresa tu correo y contraseña' });
@@ -289,6 +313,9 @@ router.post('/local/login', async (req, res) => {
       return res.status(403).json({ error: 'Debes verificar tu correo antes de iniciar sesión' });
     }
 
+    await ensurePrivilegedLawyerAccess(user);
+    if (portal === 'abogado' && user.role !== 'abogado') return res.status(403).json({ error: 'Esta cuenta está registrada como cliente. Elige Cliente para ingresar.' });
+    if (portal === 'cliente' && user.role === 'abogado') return res.status(403).json({ error: 'Esta cuenta está registrada como abogado. Elige Abogado para ingresar.' });
     user.security.failedLoginAttempts = 0;
     user.security.lockUntil = undefined;
     user.security.lastLoginAt = new Date();
@@ -304,12 +331,13 @@ router.post('/local/login', async (req, res) => {
   }
 });
 
-router.get('/me', requireAuth, (req, res) => {
-  res.json({ user: publicUser(req.user) });
+router.get('/me', requireAuth, async (req, res) => {
+  const user = await ensurePrivilegedLawyerAccess(req.user);
+  res.json({ user: publicUser(user) });
 });
 
 router.post('/logout', (req, res) => {
-  res.clearCookie('token');
+  res.clearCookie('token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
   res.json({ ok: true });
 });
 
@@ -412,7 +440,7 @@ router.post('/local/password/reset', async (req, res) => {
     const code = String(req.body.code || '').replace(/\D/g, '').slice(0, 6);
     const newPassword = String(req.body.newPassword || '');
     if (!isValidEmail(email) || code.length !== 6) return res.status(400).json({ error: 'Correo o código inválido' });
-    if (!isStrongEnoughPassword(newPassword)) return res.status(400).json({ error: 'La contraseña debe tener entre 8 y 72 caracteres' });
+    if (!isStrongEnoughPassword(newPassword)) return res.status(400).json({ error: 'La contraseña debe tener entre 10 y 72 caracteres e incluir letras y números' });
     const record = await EmailCode.findOne({ email, purpose: 'password_reset', used: false }).sort({ createdAt: -1 });
     if (!record || record.expiresAt.getTime() < Date.now()) return res.status(400).json({ error: 'El código expiró o no existe' });
     if (record.attempts >= 5) return res.status(429).json({ error: 'Demasiados intentos. Solicita un nuevo código' });

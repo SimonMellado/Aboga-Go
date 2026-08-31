@@ -6,7 +6,7 @@ async function requireAuth(req, res, next) {
   const token = req.cookies?.token || (req.headers.authorization || '').replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'No autenticado' });
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'], issuer: 'abogago-api', audience: 'abogago-web' });
     const user = await User.findById(payload.id);
     if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
     const currentVersion = Number(user.security?.tokenVersion || 0);

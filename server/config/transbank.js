@@ -33,13 +33,20 @@ function matchesCatalogProduct(kind, productId, amount, credits) {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+function transbankEnabled() {
+  return String(process.env.TRANSBANK_ENABLED || 'false').toLowerCase() === 'true';
+}
+
+
 function webpayOptions() {
+  if (isProduction && !transbankEnabled()) throw new Error('Transbank está deshabilitado');
   if (!isProduction) return new Options(IntegrationCommerceCodes.WEBPAY_PLUS, IntegrationApiKeys.WEBPAY, Environment.Integration);
   if (!process.env.TBK_WEBPAY_COMMERCE_CODE || !process.env.TBK_WEBPAY_API_KEY) throw new Error('Faltan credenciales de producción TBK_WEBPAY_COMMERCE_CODE/TBK_WEBPAY_API_KEY');
   return new Options(process.env.TBK_WEBPAY_COMMERCE_CODE, process.env.TBK_WEBPAY_API_KEY, Environment.Production);
 }
 
 function oneclickOptions() {
+  if (isProduction && !transbankEnabled()) throw new Error('Transbank está deshabilitado');
   if (!isProduction) return new Options(IntegrationCommerceCodes.ONECLICK_MALL, IntegrationApiKeys.WEBPAY, Environment.Integration);
   if (!process.env.TBK_ONECLICK_COMMERCE_CODE || !process.env.TBK_ONECLICK_API_KEY) throw new Error('Faltan credenciales de producción TBK_ONECLICK_COMMERCE_CODE/TBK_ONECLICK_API_KEY');
   return new Options(process.env.TBK_ONECLICK_COMMERCE_CODE, process.env.TBK_ONECLICK_API_KEY, Environment.Production);
@@ -63,4 +70,5 @@ module.exports = {
   oneclickInscriptionTx,
   oneclickChargeTx,
   oneclickCommerceCode,
+  transbankEnabled,
 };

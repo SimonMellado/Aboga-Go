@@ -58,7 +58,8 @@ async function createFlowPayment({ commerceOrder, subject, amount, email, urlCon
   const response = await fetch(`${config.apiBase}/payment/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))
+    body: new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])),
+    signal: AbortSignal.timeout(20000)
   });
   return parseFlowResponse(response);
 }
@@ -69,7 +70,7 @@ async function getFlowPaymentStatus(token) {
   const params = { apiKey: config.apiKey, token: String(token || '') };
   params.s = signParams(params, config.secretKey);
   const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
-  const response = await fetch(`${config.apiBase}/payment/getStatus?${query}`, { method: 'GET' });
+  const response = await fetch(`${config.apiBase}/payment/getStatus?${query}`, { method: 'GET', signal: AbortSignal.timeout(20000) });
   return parseFlowResponse(response);
 }
 

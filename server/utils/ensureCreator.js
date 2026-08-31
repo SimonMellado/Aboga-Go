@@ -29,7 +29,7 @@ async function ensureCreatorAccount() {
       providerId: `local:${email}`,
       authProviders: [{ provider: 'local', providerId: `local:${email}` }],
       emailVerified: true,
-      role: 'cliente',
+      role: 'abogado',
       staffRole: 'creador',
       verified: true,
       verificationStatus: 'verified'
@@ -46,7 +46,7 @@ async function ensureCreatorAccount() {
   user.security = user.security || {};
   user.security.failedLoginAttempts = 0;
   user.security.lockUntil = undefined;
-  if (!user.role || user.role === 'sin_definir' || user.role === 'admin') user.role = 'cliente';
+  user.role = 'abogado';
 
   const hasLocalProvider = Array.isArray(user.authProviders) && user.authProviders.some(p => p.provider === 'local');
   if (!hasLocalProvider) {

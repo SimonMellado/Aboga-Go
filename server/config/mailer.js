@@ -43,39 +43,39 @@ async function deliver(message) {
     html: message.html,
     text: message.text,
   };
-
   if (cfg.replyTo) payload.reply_to = cfg.replyTo;
 
-  let response;
-  try {
-    response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${cfg.apiKey}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'ABOGA-GO/6.10.17',
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch (err) {
-    const e = new Error(`No se pudo conectar con Resend: ${err?.message || 'error de red'}`);
-    e.cause = err;
-    throw e;
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cfg.apiKey}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'ABOGA-GO/7.0.0',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000),
+      });
+      let data = {};
+      const raw = await response.text();
+      if (raw) {
+        try { data = JSON.parse(raw); } catch { data = { raw }; }
+      }
+      if (response.ok) return { devMode: false, provider: 'resend', messageId: data?.id || '' };
+      const detail = data?.message || data?.error || data?.name || `HTTP ${response.status}`;
+      lastError = new Error(`Resend rechazó el correo: ${detail}`);
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) throw lastError;
+    } catch (err) {
+      lastError = err;
+      if (attempt === 2) break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 700 * attempt));
   }
-
-  let data = {};
-  const raw = await response.text();
-  if (raw) {
-    try { data = JSON.parse(raw); } catch { data = { raw }; }
-  }
-
-  if (!response.ok) {
-    const detail = data?.message || data?.error || data?.name || `HTTP ${response.status}`;
-    throw new Error(`Resend rechazó el correo: ${detail}`);
-  }
-
-  return { devMode: false, provider: 'resend', messageId: data?.id || '' };
+  const e = new Error(`No se pudo enviar el correo con Resend: ${lastError?.message || 'error de red'}`);
+  e.cause = lastError;
+  throw e;
 }
 
 async function sendCode({ to, code, purpose = 'register' }) {

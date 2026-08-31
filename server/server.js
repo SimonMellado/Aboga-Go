@@ -57,7 +57,7 @@ const allowedOrigins = new Set([
   ...extraOrigins,
 ].filter(Boolean));
 app.disable('x-powered-by');
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' }, hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: false } : false }));
 app.use(compression());
 app.use(cors({
   origin(origin, callback) {
@@ -110,7 +110,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.18', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '7.0.0', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);
@@ -125,7 +125,7 @@ connectDB().then(async () => {
   const transbankEnabled = String(process.env.TRANSBANK_ENABLED || 'false').toLowerCase() === 'true';
   console.log(`Transbank ${transbankEnabled ? 'habilitado' : 'deshabilitado hasta configurar credenciales'}`);
   await ensureCreatorAccount();
-  if (String(process.env.MAIL_VERIFY_ON_START || 'true').toLowerCase() === 'true') {
+  if (String(process.env.MAIL_VERIFY_ON_START || 'false').toLowerCase() === 'true') {
     const mailStatus = await verifyMailer();
     if (mailStatus.ready) console.log(`Resend ABOGA GO configurado correctamente: ${mailStatus.from || 'remitente listo'}`);
     else console.error(`Resend ABOGA GO no disponible: ${mailStatus.error || 'configuración incompleta'}`);

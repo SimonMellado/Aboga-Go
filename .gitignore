@@ -1,0 +1,9 @@
+.env
+*.env
+!.env.example
+server/.env
+server/node_modules/
+server/private_uploads/
+server/uploads/
+*.log
+.DS_Store

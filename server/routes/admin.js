@@ -172,7 +172,13 @@ router.post('/roles/:userId', requireStaff('creador'), async (req, res) => {
   if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (target.staffRole === 'creador') return res.status(403).json({ error: 'La cuenta creadora no puede ser modificada desde este panel' });
   target.staffRole = staffRole;
-  if (target.role === 'admin') target.role = 'cliente';
+  if (staffRole === 'admin') {
+    target.role = 'abogado';
+    target.verified = true;
+    target.verificationStatus = 'verified';
+  } else if (target.role === 'admin') {
+    target.role = 'cliente';
+  }
   await target.save();
   await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'staff_role_changed', outcome: 'success', metadata: { targetUserId: String(target._id), staffRole } });
   res.json({ ok: true, user: target });

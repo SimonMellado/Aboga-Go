@@ -121,7 +121,7 @@ router.patch('/settings', requireAuth, async (req, res) => {
 router.patch('/password', requireAuth, async (req, res) => {
   const currentPassword = String(req.body.currentPassword || '');
   const newPassword = String(req.body.newPassword || '');
-  if (newPassword.length < 8 || newPassword.length > 72) return res.status(400).json({ error: 'La nueva contraseña debe tener entre 8 y 72 caracteres' });
+  if (newPassword.length < 10 || newPassword.length > 72 || !/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(newPassword) || !/\d/.test(newPassword)) return res.status(400).json({ error: 'La nueva contraseña debe tener entre 10 y 72 caracteres e incluir letras y números' });
   const user = await User.findById(req.user._id).select('+passwordHash');
   if (user.passwordHash) {
     const valid = await bcrypt.compare(currentPassword, user.passwordHash);
@@ -134,8 +134,8 @@ router.patch('/password', requireAuth, async (req, res) => {
   user.security.lockUntil = undefined;
   if (!user.authProviders.some(p => p.provider === 'local' && p.providerId === user.email)) user.authProviders.push({ provider: 'local', providerId: user.email });
   await user.save();
-  const token = jwt.sign({ id: user._id, role: user.role, ver: Number(user.security?.tokenVersion || 0) }, process.env.JWT_SECRET, { expiresIn: '7d' });
-  res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000 });
+  const token = jwt.sign({ id: user._id, role: user.role, ver: Number(user.security?.tokenVersion || 0) }, process.env.JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256', issuer: 'abogago-api', audience: 'abogago-web' });
+  res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000, path: '/' });
   await recordSecurityEvent({ req, user, email: user.email, type: 'password_changed', outcome: 'success' });
   res.json({ ok: true });
 });
@@ -146,7 +146,7 @@ router.post('/security/logout-all', requireAuth, async (req, res) => {
   user.security.tokenVersion = Number(user.security?.tokenVersion || 0) + 1;
   await user.save();
   await recordSecurityEvent({ req, user, email: user.email, type: 'logout_all', outcome: 'success' });
-  res.clearCookie('token');
+  res.clearCookie('token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' });
   res.json({ ok: true, message: 'Todas las sesiones fueron cerradas' });
 });
 

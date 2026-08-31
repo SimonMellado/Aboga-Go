@@ -20,6 +20,7 @@ let activeProposalCaseId = null;
 let activeClientCaseId = null;
 let resendTimer = null;
 let selectedRegisterRole = 'cliente';
+let selectedLoginPortal = 'cliente';
 let pendingRegisterLawyer = null;
 
 const PUBLIC_CASE_CATALOG = {
@@ -76,6 +77,7 @@ function fmtDate(v) { return v ? new Date(v).toLocaleDateString('es-CL', { day: 
 function fmtMoney(v) { return `$${Number(v || 0).toLocaleString('es-CL')}`; }
 function staffRoleOf(user = currentUser) { if (!user) return 'none'; if (user.staffRole && user.staffRole !== 'none') return user.staffRole; return user.role === 'admin' ? 'admin' : 'none'; }
 function isStaffUser(user = currentUser) { return ['creador','admin','moderador'].includes(staffRoleOf(user)); }
+function isPrivilegedStaffLawyer(user = currentUser) { return ['creador','admin'].includes(staffRoleOf(user)); }
 function normalizePhoneForWa(v = '') { return String(v).replace(/\D/g, ''); }
 function toast(msg) { const el = document.getElementById('toast'); if (!el) return; el.textContent = msg; el.classList.add('show'); clearTimeout(el._timer); el._timer = setTimeout(() => el.classList.remove('show'), 3400); }
 function togglePassword(id, button) {
@@ -88,7 +90,7 @@ function togglePassword(id, button) {
 function updatePasswordStrength() {
   const value = document.getElementById('register-password')?.value || '';
   let score = 0;
-  if (value.length >= 8) score += 1;
+  if (value.length >= 10) score += 1;
   if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
   if (/\d/.test(value)) score += 1;
   if (/[^A-Za-z0-9]/.test(value) && value.length >= 12) score += 1;
@@ -96,7 +98,7 @@ function updatePasswordStrength() {
   const bar = document.getElementById('password-strength-bar');
   const text = document.getElementById('password-strength-text');
   if (bar) bar.style.width = `${Math.max(8, score * 25)}%`;
-  if (text) text.textContent = value ? labels[score] : 'Mínimo 8 caracteres. Recomendado: mayúscula, minúscula y número.';
+  if (text) text.textContent = value ? labels[score] : 'Mínimo 10 caracteres e incluye letras y números.';
 }
 
 function hideAllViews() { ['landing', 'casos', 'cliente', 'abogado', 'cuenta'].forEach(v => document.getElementById(`view-${v}`)?.classList.add('hidden')); }
@@ -134,6 +136,15 @@ function showLocalLogin() { document.getElementById('login-methods')?.classList.
 function showLocalRegister() { document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('local-login-form')?.classList.add('hidden'); document.getElementById('local-register-form')?.classList.remove('hidden'); document.getElementById('auth-tab-login')?.classList.remove('active'); document.getElementById('auth-tab-register')?.classList.add('active'); resetAuthModalScroll(); }
 function backToRegisterStep() { document.getElementById('login-code-step')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); showLocalRegister(); }
 function showPasswordReset() { document.getElementById('local-auth-step')?.classList.add('hidden'); document.getElementById('password-reset-step')?.classList.remove('hidden'); }
+function setLoginPortal(role) {
+  selectedLoginPortal = role === 'abogado' ? 'abogado' : 'cliente';
+  document.querySelectorAll('[data-login-role]').forEach(btn => {
+    const active = btn.dataset.loginRole === selectedLoginPortal;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+}
+
 function setRegisterRole(role) {
   selectedRegisterRole = role === 'abogado' ? 'abogado' : 'cliente';
   document.querySelectorAll('[data-register-role]').forEach(btn => {
@@ -173,7 +184,7 @@ async function uploadLawyerDocument(inputId) {
 
 async function loginLocal() {
   try {
-    const data = await apiPost('/auth/local/login', { email: document.getElementById('login-email-local').value.trim(), password: document.getElementById('login-password-local').value });
+    const data = await apiPost('/auth/local/login', { email: document.getElementById('login-email-local').value.trim(), password: document.getElementById('login-password-local').value, portal: selectedLoginPortal });
     currentUser = data.user;
     closeLoginModal();
     afterLogin();
@@ -195,7 +206,7 @@ async function registerLocal() {
     pendingRegisterLawyer = payload;
   } else pendingRegisterLawyer = null;
   try {
-    await apiPost('/auth/local/register/request-code', { firstName, lastName, email, password, website: document.getElementById('register-website')?.value || '' });
+    await apiPost('/auth/local/register/request-code', { firstName, lastName, email, password, accountType: selectedRegisterRole, website: document.getElementById('register-website')?.value || '' });
     document.getElementById('local-auth-step').classList.add('hidden');
     document.getElementById('login-code-step').classList.remove('hidden');
     document.getElementById('code-email-label').textContent = email;
@@ -210,7 +221,7 @@ async function verifyRegisterCode() {
     if (btn) { btn.disabled = true; btn.textContent = 'Verificando...'; }
     const data = await apiPost('/auth/local/register/verify-code', { email: document.getElementById('register-email').value.trim(), code: document.getElementById('auth-code').value.trim() });
     currentUser = data.user;
-    let bonusGranted = false;
+    let bonusGranted = Boolean(data.bonusGranted);
     if (data.needsRole) {
       if (selectedRegisterRole === 'abogado' && pendingRegisterLawyer) {
         if (btn) btn.textContent = 'Subiendo documento...';
@@ -261,7 +272,8 @@ async function restablecerPassword() {
 async function afterLogin() {
   actualizarNavSesion();
   cargarNotificaciones();
-  if (isStaffUser()) { window.location.href = 'admin.html'; return; }
+  if (staffRoleOf() === 'moderador') { window.location.href = 'admin.html'; return; }
+  if (isPrivilegedStaffLawyer()) { switchView('abogado'); return; }
   if (currentUser.role === 'sin_definir') document.getElementById('role-modal')?.classList.remove('hidden');
   else if (currentUser.role === 'cliente' && localStorage.getItem('abogago_pending_case')) switchView('cliente');
   else switchView(currentUser.role === 'cliente' ? 'cliente' : currentUser.role === 'abogado' ? 'abogado' : 'landing');
@@ -278,7 +290,11 @@ function actualizarNavSesion() {
   actions.innerHTML = `<button class="nav-icon-btn" onclick="toggleNotifications()" aria-label="Notificaciones">🔔<span id="notification-count" class="notification-count hidden">0</span></button>`;
   if (isStaffUser()) {
     const label = staffRoleOf() === 'creador' ? 'Panel creador' : staffRoleOf() === 'moderador' ? 'Panel moderador' : 'Panel admin';
-    session.innerHTML = `<button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
+    if (isPrivilegedStaffLawyer()) {
+      session.innerHTML = `<button class="nav-btn ghost" onclick="switchView('abogado')">Panel abogado</button><button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
+    } else {
+      session.innerHTML = `<button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
+    }
     return;
   }
   session.innerHTML = `<button class="nav-btn ghost" onclick="switchView('cuenta')">${esc(currentUser.firstName || currentUser.name || 'Mi cuenta')} ${tier}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
@@ -302,6 +318,7 @@ async function initSesion() {
   const params = new URLSearchParams(location.search);
   if (params.get('admin') === '1' && !currentUser) setTimeout(() => openLoginModal(), 0);
   if (params.get('admin') === '1' && isStaffUser()) { window.location.href = 'admin.html'; return; }
+  if (params.get('login') === 'exitoso' && isPrivilegedStaffLawyer()) setTimeout(() => switchView('abogado'), 0);
   if (params.get('login') === 'elegir_rol' && currentUser) document.getElementById('role-modal')?.classList.remove('hidden');
   if (params.get('pago') === 'exitoso') toast('Pago aprobado. Créditos agregados.');
   if (params.get('pago') === 'procesando') toast('Pago recibido. Estamos terminando de acreditar tus créditos.');

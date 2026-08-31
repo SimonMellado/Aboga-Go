@@ -7,6 +7,7 @@ const emailCodeSchema = new mongoose.Schema({
   purpose: { type: String, enum: ['register', 'password_reset'], default: 'register' },
   firstName: { type: String, trim: true },
   lastName: { type: String, trim: true },
+  intendedRole: { type: String, enum: ['cliente', 'abogado'], default: 'cliente' },
   passwordHash: { type: String },
   attempts: { type: Number, default: 0 },
   used: { type: Boolean, default: false },
