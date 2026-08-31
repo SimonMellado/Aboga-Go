@@ -3,21 +3,34 @@ const { WebpayPlus, Oneclick, Options, IntegrationApiKeys, IntegrationCommerceCo
 
 const PREMIUM_PRIORITY_HOURS = Number(process.env.PREMIUM_PRIORITY_HOURS || 24);
 
-const CREDIT_PACKS = {
-  credit_1: { id: 'credit_1', name: '1 crédito', credits: 1, price: 1990 },
-  credit_5: { id: 'credit_5', name: '5 créditos', credits: 5, price: 4990 },
-  credit_100: { id: 'credit_100', name: '100 créditos', credits: 100, price: 69990 },
-};
+const CREDIT_PACKS = Object.freeze({
+  credit_1: Object.freeze({ id: 'credit_1', name: '1 crédito', credits: 1, price: 1990 }),
+  credit_5: Object.freeze({ id: 'credit_5', name: '5 créditos', credits: 5, price: 4990 }),
+  credit_100: Object.freeze({ id: 'credit_100', name: '100 créditos', credits: 100, price: 69990 }),
+});
 
 const CREDIT_PRICE = CREDIT_PACKS.credit_1.price;
 
-const PLANS = {
-  premium: { id: 'premium', name: 'Premium', price: 14990, credits: 10 },
-  pro: { id: 'pro', name: 'Premium Pro', price: 29990, credits: 30 },
-};
+const PLANS = Object.freeze({
+  premium: Object.freeze({ id: 'premium', name: 'Premium', price: 14990, credits: 10 }),
+  pro: Object.freeze({ id: 'pro', name: 'Premium Pro', price: 29990, credits: 30 }),
+});
 
 const PLAN_CREDITS = PLANS.premium.credits;
 const PLAN_PRICE = PLANS.premium.price;
+
+function getCatalogProduct(kind, productId) {
+  const id = String(productId || '').toLowerCase();
+  if (kind === 'credit_pack' || kind === 'pack') return CREDIT_PACKS[id] || null;
+  if (kind === 'plan' || kind === 'plan_inicial' || kind === 'plan_renovacion') return PLANS[id] || null;
+  return null;
+}
+
+function matchesCatalogProduct(kind, productId, amount, credits) {
+  const item = getCatalogProduct(kind, productId);
+  return Boolean(item && Number(item.price) === Number(amount) && Number(item.credits) === Number(credits));
+}
+
 const isProduction = process.env.NODE_ENV === 'production';
 
 function webpayOptions() {
@@ -44,6 +57,8 @@ module.exports = {
   PLANS,
   PLAN_CREDITS,
   PLAN_PRICE,
+  getCatalogProduct,
+  matchesCatalogProduct,
   webpayPlusTx,
   oneclickInscriptionTx,
   oneclickChargeTx,

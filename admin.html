@@ -46,6 +46,7 @@
       <div class="tab" data-adm="causas" data-permission="admin" onclick="setAdminTab('causas')">Causas activas</div>
       <div class="tab" data-adm="creditos" data-permission="admin" onclick="setAdminTab('creditos')">Créditos</div>
       <div class="tab" data-adm="transferencias" data-permission="admin" onclick="setAdminTab('transferencias')">Transferencias</div>
+      <div class="tab" data-adm="compras" data-permission="admin" onclick="setAdminTab('compras')">Compras JSON</div>
       <div class="tab" data-adm="seguridad" data-permission="admin" onclick="setAdminTab('seguridad')">Seguridad</div>
       <div class="tab" data-adm="roles" data-permission="creator" onclick="setAdminTab('roles')">Agregar roles</div>
     </div>
@@ -55,6 +56,7 @@
     <div id="admin-causas" class="card hidden"></div>
     <div id="admin-creditos" class="card hidden"></div>
     <div id="admin-transferencias" class="card hidden"></div>
+    <div id="admin-compras" class="card hidden"></div>
     <div id="admin-seguridad" class="card hidden"></div>
     <div id="admin-roles" class="card hidden"></div>
   </div>
@@ -64,6 +66,17 @@
   <div class="card modal-card-xl admin-portal-preview-card">
     <button class="admin-preview-close" type="button" onclick="cerrarVistaPortal()" aria-label="Cerrar">×</button>
     <div id="portal-preview-content"></div>
+  </div>
+</div>
+
+<div id="purchase-json-modal" class="modal-backdrop hidden" onclick="if(event.target===this) cerrarCompraJson()">
+  <div class="card modal-card-xl purchase-json-card">
+    <button class="admin-preview-close" type="button" onclick="cerrarCompraJson()" aria-label="Cerrar">×</button>
+    <div class="purchase-json-head">
+      <div><div class="eyebrow">Auditoría de pago</div><h2>Detalle JSON de compra</h2><p>Datos internos para comprobar la compra y la evidencia de pago registrada.</p></div>
+      <button class="btn btn-outline btn-sm" type="button" onclick="copiarCompraJson()">Copiar JSON</button>
+    </div>
+    <pre id="purchase-json-content" class="purchase-json-pre"></pre>
   </div>
 </div>
 

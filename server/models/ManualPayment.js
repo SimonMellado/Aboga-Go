@@ -9,6 +9,11 @@ const manualPaymentSchema = new mongoose.Schema({
   credits: { type: Number, default: 0 },
   country: { type: String, enum: ['CL'], default: 'CL' },
   reference: { type: String, required: true, unique: true, index: true },
+  payerRutNormalized: { type: String, default: '', index: true },
+  payerRutDisplay: { type: String, default: '' },
+  settlementId: { type: String, default: undefined },
+  verificationSource: { type: String, enum: ['manual', 'provider_webhook'], default: undefined },
+  autoApprovedAt: Date,
   status: { type: String, enum: ['pending_proof', 'under_review', 'processing', 'approved', 'rejected'], default: 'pending_proof', index: true },
   proof: {
     path: { type: String, default: '' },
@@ -21,5 +26,7 @@ const manualPaymentSchema = new mongoose.Schema({
   reviewNote: { type: String, trim: true, maxlength: 500, default: '' },
   createdAt: { type: Date, default: Date.now }
 });
+
+manualPaymentSchema.index({ settlementId: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('ManualPayment', manualPaymentSchema);

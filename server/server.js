@@ -65,20 +65,22 @@ app.use(passport.initialize());
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiadas solicitudes. Intenta nuevamente en unos minutos.' } });
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false, skipSuccessfulRequests: true, message: { error: 'Demasiados intentos de inicio de sesión. Espera unos minutos.' } });
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiados intentos de registro desde esta red. Intenta más tarde.' } });
-const sensitiveLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiadas solicitudes. Intenta nuevamente más tarde.' } });
+const sensitiveLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false, skip: req => req.path === '/transfer/webhook', message: { error: 'Demasiadas solicitudes. Intenta nuevamente más tarde.' } });
+const transferWebhookLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiadas confirmaciones de transferencia.' } });
 function mutationOriginGuard(req, res, next) {
   if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) return next();
-  const exempt = ['/api/payments/credits/return','/api/payments/oneclick/inscribir/return','/api/auth/apple/callback'];
+  const exempt = ['/api/payments/credits/return','/api/payments/oneclick/inscribir/return','/api/payments/transfer/webhook','/api/auth/apple/callback'];
   if (exempt.includes(req.path)) return next();
   const origin = req.get('origin');
   if (origin && !allowedOrigins.has(origin)) return res.status(403).json({ error: 'Origen no permitido' });
   next();
 }
 app.use(mutationOriginGuard);
-app.use(['/api/auth','/api/account','/api/admin'], (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+app.use(['/api/auth','/api/account','/api/admin','/api/payments'], (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 app.use('/api/auth/local/login', loginLimiter);
 app.use('/api/auth/local/register', registerLimiter);
 app.use('/api/auth/local', authLimiter);
+app.use('/api/payments/transfer/webhook', transferWebhookLimiter);
 app.use('/api/payments', sensitiveLimiter);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/cases', require('./routes/cases'));
@@ -86,7 +88,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.6', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.12', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);

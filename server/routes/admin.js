@@ -7,10 +7,12 @@ const User = require('../models/User');
 const Case = require('../models/Case');
 const Notification = require('../models/Notification');
 const ManualPayment = require('../models/ManualPayment');
+const CreditTransaction = require('../models/CreditTransaction');
 const { sendTransactional } = require('../config/mailer');
 const SecurityEvent = require('../models/SecurityEvent');
 const SignupBonusClaim = require('../models/SignupBonusClaim');
 const { recordSecurityEvent } = require('../utils/security');
+const { matchesCatalogProduct } = require('../config/transbank');
 
 router.use(requireAuth);
 
@@ -176,8 +178,162 @@ router.post('/roles/:userId', requireStaff('creador'), async (req, res) => {
   res.json({ ok: true, user: target });
 });
 
+
+router.get('/compras', requireStaff('creador', 'admin'), async (req, res) => {
+  const [cardPayments, transfers] = await Promise.all([
+    CreditTransaction.find().populate('user', 'name firstName lastName email rut rutNormalized credits premium').sort({ createdAt: -1 }).lean(),
+    ManualPayment.find().populate('user', 'name firstName lastName email rut rutNormalized credits premium').sort({ createdAt: -1 }).lean()
+  ]);
+
+  const cardRows = cardPayments.map(p => {
+    const verification = p.providerVerification || {};
+    const providerVerified = Boolean(p.status === 'approved' && verification.verified);
+    return {
+      id: p._id,
+      source: 'card',
+      method: p.provider === 'oneclick' ? 'Oneclick' : 'Webpay',
+      provider: p.provider || (p.kind === 'pack' ? 'webpay' : 'oneclick'),
+      user: p.user || null,
+      kind: p.kind,
+      productId: p.plan || (p.kind === 'pack' ? 'credit_pack' : p.kind),
+      credits: p.credits,
+      amount: p.clpAmount,
+      status: p.status,
+      createdAt: p.createdAt,
+      paymentVerified: providerVerified,
+      verificationLevel: providerVerified ? 'provider' : (p.status === 'approved' ? 'historical_without_evidence' : 'not_verified'),
+      evidence: {
+        buyOrder: p.buyOrder || '',
+        providerStatus: verification.providerStatus || '',
+        responseCode: verification.responseCode,
+        authorizationCode: verification.authorizationCode || '',
+        paymentTypeCode: verification.paymentTypeCode || '',
+        cardLast4: verification.cardLast4 || '',
+        installmentsNumber: verification.installmentsNumber,
+        transactionDate: verification.transactionDate || null,
+        verifiedAt: verification.verifiedAt || null,
+        amountReportedByProvider: verification.amount
+      }
+    };
+  });
+
+  const transferRows = transfers.map(p => {
+    const automatic = p.verificationSource === 'provider_webhook' && p.status === 'approved' && Boolean(p.settlementId);
+    const manualApproved = p.verificationSource === 'manual' && p.status === 'approved';
+    return {
+      id: p._id,
+      source: 'transfer',
+      method: 'Transferencia',
+      provider: p.verificationSource === 'provider_webhook' ? 'conciliacion_webhook' : 'manual',
+      user: p.user || null,
+      kind: p.kind,
+      productId: p.productId,
+      credits: p.credits,
+      amount: p.amount,
+      status: p.status,
+      createdAt: p.createdAt,
+      paymentVerified: automatic,
+      verificationLevel: automatic ? 'provider' : (manualApproved ? 'manual_bank_check' : 'not_verified'),
+      evidence: {
+        reference: p.reference,
+        payerRut: p.payerRutDisplay || '',
+        settlementId: p.settlementId || '',
+        verificationSource: p.verificationSource || '',
+        autoApprovedAt: p.autoApprovedAt || null,
+        reviewedAt: p.reviewedAt || null,
+        reviewedBy: p.reviewedBy || null,
+        reviewNote: p.reviewNote || '',
+        proofUploaded: Boolean(p.proof?.path),
+        proofOriginalName: p.proof?.originalName || ''
+      }
+    };
+  });
+
+  const rows = [...cardRows, ...transferRows].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json({
+    generatedAt: new Date(),
+    totals: {
+      purchases: rows.length,
+      approved: rows.filter(r => r.status === 'approved').length,
+      providerVerified: rows.filter(r => r.paymentVerified).length,
+      needsReview: rows.filter(r => r.verificationLevel === 'manual_bank_check' || r.verificationLevel === 'historical_without_evidence').length
+    },
+    purchases: rows
+  });
+});
+
+router.get('/compras/:source/:id/json', requireStaff('creador', 'admin'), async (req, res) => {
+  const source = String(req.params.source || '');
+  if (source === 'card') {
+    const payment = await CreditTransaction.findById(req.params.id).populate('user', 'name firstName lastName email rut rutNormalized credits premium createdAt').lean();
+    if (!payment) return res.status(404).json({ error: 'Compra no encontrada' });
+    const verification = payment.providerVerification || {};
+    return res.json({
+      compra: {
+        id: payment._id,
+        metodo: payment.provider === 'oneclick' ? 'Oneclick' : 'Webpay',
+        proveedor: payment.provider || 'transbank',
+        estado: payment.status,
+        montoCLP: payment.clpAmount,
+        creditos: payment.credits,
+        tipo: payment.kind,
+        plan: payment.plan || null,
+        fechaCreacion: payment.createdAt
+      },
+      abogado: payment.user || null,
+      verificacionPago: {
+        pagoConfirmadoPorProveedor: Boolean(payment.status === 'approved' && verification.verified),
+        estadoProveedor: verification.providerStatus || null,
+        codigoRespuesta: verification.responseCode ?? null,
+        codigoAutorizacion: verification.authorizationCode || null,
+        tipoPago: verification.paymentTypeCode || null,
+        tarjetaUltimos4: verification.cardLast4 || null,
+        cuotas: verification.installmentsNumber ?? null,
+        montoInformadoPorProveedor: verification.amount ?? null,
+        fechaTransaccion: verification.transactionDate || null,
+        fechaVerificacion: verification.verifiedAt || null,
+        ordenCompra: payment.buyOrder || null,
+        nota: payment.status === 'approved' && !verification.verified ? 'Compra histórica aprobada antes de guardar evidencia detallada del proveedor.' : null
+      }
+    });
+  }
+  if (source === 'transfer') {
+    const payment = await ManualPayment.findById(req.params.id).populate('user', 'name firstName lastName email rut rutNormalized credits premium createdAt').populate('reviewedBy', 'name email staffRole').lean();
+    if (!payment) return res.status(404).json({ error: 'Transferencia no encontrada' });
+    const autoVerified = payment.status === 'approved' && payment.verificationSource === 'provider_webhook' && Boolean(payment.settlementId);
+    return res.json({
+      compra: {
+        id: payment._id,
+        metodo: 'Transferencia bancaria',
+        estado: payment.status,
+        montoCLP: payment.amount,
+        creditos: payment.credits,
+        tipo: payment.kind,
+        producto: payment.productId,
+        referencia: payment.reference,
+        fechaCreacion: payment.createdAt
+      },
+      abogado: payment.user || null,
+      verificacionPago: {
+        pagoConfirmadoAutomaticamente: autoVerified,
+        origenValidacion: payment.verificationSource || 'pendiente',
+        idLiquidacionBancoProveedor: payment.settlementId || null,
+        rutTitularEsperado: payment.payerRutDisplay || null,
+        comprobanteCargado: Boolean(payment.proof?.path),
+        nombreComprobante: payment.proof?.originalName || null,
+        aprobadoAutomaticamenteEn: payment.autoApprovedAt || null,
+        revisadoEn: payment.reviewedAt || null,
+        revisadoPor: payment.reviewedBy || null,
+        notaRevision: payment.reviewNote || null,
+        advertencia: payment.verificationSource === 'manual' ? 'La aprobación manual indica que un administrador declaró haber verificado el abono. Confirma el movimiento en la cuenta bancaria si necesitas una segunda comprobación.' : null
+      }
+    });
+  }
+  res.status(400).json({ error: 'Origen de compra no válido' });
+});
+
 router.get('/transferencias', requireStaff('creador', 'admin'), async (req, res) => {
-  const rows = await ManualPayment.find().populate('user', 'name firstName lastName email').sort({ createdAt: -1 }).lean();
+  const rows = await ManualPayment.find().populate('user', 'name firstName lastName email rut').sort({ createdAt: -1 }).lean();
   res.json(rows);
 });
 
@@ -216,6 +372,11 @@ router.post('/transferencias/:id/revisar', requireStaff('creador', 'admin'), asy
     return res.status(400).json({ error: 'El pago no tiene comprobante cargado' });
   }
   try {
+    if (!matchesCatalogProduct(payment.kind, payment.productId, payment.amount, payment.credits)) {
+      payment.status = 'under_review';
+      await payment.save();
+      return res.status(409).json({ error: 'El monto o los créditos no coinciden con el catálogo oficial. No se aplicó el pago.' });
+    }
     const user = await User.findById(payment.user);
     if (!user) throw new Error('Usuario no encontrado');
     if (payment.kind === 'credit_pack') {
@@ -228,6 +389,7 @@ router.post('/transferencias/:id/revisar', requireStaff('creador', 'admin'), asy
     }
     await user.save();
     payment.status = 'approved';
+    payment.verificationSource = 'manual';
     await payment.save();
     await Notification.create({ user: user._id, type: 'account', title: 'Transferencia aprobada', message: payment.kind === 'credit_pack' ? `Se agregaron ${payment.credits} créditos a tu cuenta.` : 'Tu plan fue activado por 30 días. El pago por transferencia no se renueva automáticamente.', linkView: 'abogado' });
     return res.json({ ok: true, payment });

@@ -34,7 +34,7 @@ function setAdminTab(t){
   const allowed = t === 'roles' ? isCreator() : t === 'verificacion' ? canReview() : canAdmin();
   if(!allowed) return toast('No tienes permisos para esta sección');
   document.querySelectorAll('[data-adm]').forEach(el=>el.classList.toggle('active', el.dataset.adm===t));
-  ['usuarios','verificacion','causas','creditos','transferencias','seguridad','roles'].forEach(id=>document.getElementById('admin-'+id)?.classList.toggle('hidden', id!==t));
+  ['usuarios','verificacion','causas','creditos','transferencias','compras','seguridad','roles'].forEach(id=>document.getElementById('admin-'+id)?.classList.toggle('hidden', id!==t));
 }
 
 async function verificarAbogado(id){ try{ await apiPost(`/admin/verificar/${id}`); toast('Abogado verificado'); renderAdmin(); }catch(err){ toast(err.error || 'No se pudo verificar'); } }
@@ -43,6 +43,36 @@ async function ajustarCreditos(userId, delta){ try{ await apiPost(`/admin/credit
 async function cambiarRolInterno(userId){ const select=document.getElementById(`staff-role-${userId}`); if(!select) return; try{ await apiPost(`/admin/roles/${userId}`, { staffRole:select.value }); toast('Rol interno actualizado'); renderAdmin(); }catch(err){ toast(err.error || 'No se pudo cambiar el rol'); } }
 function verComprobante(id){ window.open(`${API_BASE}/admin/transferencias/${id}/comprobante`, '_blank', 'noopener'); }
 async function revisarTransferencia(id, action){ const label=action==='approve'?'aprobar':'rechazar'; if(!confirm(`¿Seguro que deseas ${label} esta transferencia?`)) return; const note=prompt('Nota interna/opcional:','') ?? ''; try{ await apiPost(`/admin/transferencias/${id}/revisar`, { action, note }); toast(action==='approve'?'Transferencia aprobada':'Transferencia rechazada'); renderAdmin(); }catch(err){ toast(err.error || 'No se pudo revisar el pago'); } }
+
+
+let currentPurchaseJson = null;
+
+function verificationBadge(p){
+  if(p.paymentVerified) return '<span class="pill pill-forest">Pago confirmado</span>';
+  if(p.verificationLevel === 'manual_bank_check') return '<span class="pill pill-brass">Aprobación manual</span>';
+  if(p.verificationLevel === 'historical_without_evidence') return '<span class="pill pill-brass">Histórico · revisar</span>';
+  return '<span class="pill pill-neutral">Sin confirmar</span>';
+}
+
+async function verCompraJson(source, id){
+  try{
+    currentPurchaseJson = await apiGet(`/admin/compras/${source}/${id}/json`);
+    document.getElementById('purchase-json-content').textContent = JSON.stringify(currentPurchaseJson, null, 2);
+    document.getElementById('purchase-json-modal')?.classList.remove('hidden');
+    document.body.style.overflow='hidden';
+  }catch(err){ toast(err.error || 'No se pudo abrir el detalle de la compra'); }
+}
+
+function cerrarCompraJson(){
+  document.getElementById('purchase-json-modal')?.classList.add('hidden');
+  document.body.style.overflow='';
+}
+
+async function copiarCompraJson(){
+  if(!currentPurchaseJson) return;
+  try{ await navigator.clipboard.writeText(JSON.stringify(currentPurchaseJson, null, 2)); toast('JSON copiado'); }
+  catch(_){ toast('No se pudo copiar automáticamente'); }
+}
 
 function profileSummary(l){
   const p=l.lawyerProfile||{};
@@ -100,10 +130,10 @@ async function verPortalUsuario(userId){
 }
 
 async function renderAdmin(){
-  let users=[], pendientes=[], causas=[], transfers=[], roles=[], security=null;
+  let users=[], pendientes=[], causas=[], transfers=[], purchases={ totals:{}, purchases:[] }, roles=[], security=null;
   try{
     const jobs=[];
-    if(canAdmin()) jobs.push(apiGet('/admin/usuarios').then(v=>users=v), apiGet('/admin/causas').then(v=>causas=v), apiGet('/admin/transferencias').then(v=>transfers=v), apiGet('/admin/security/summary').then(v=>security=v));
+    if(canAdmin()) jobs.push(apiGet('/admin/usuarios').then(v=>users=v), apiGet('/admin/causas').then(v=>causas=v), apiGet('/admin/transferencias').then(v=>transfers=v), apiGet('/admin/compras').then(v=>purchases=v), apiGet('/admin/security/summary').then(v=>security=v));
     if(canReview()) jobs.push(apiGet('/admin/verificacion-pendiente').then(v=>pendientes=v));
     if(isCreator()) jobs.push(apiGet('/admin/roles').then(v=>roles=v));
     await Promise.all(jobs);
@@ -117,7 +147,12 @@ async function renderAdmin(){
     const abogados=users.filter(u=>u.role==='abogado');
     document.getElementById('admin-creditos').innerHTML = `<div class="admin-section-head"><div><h3>Créditos</h3><p>Ajustes manuales de saldo para abogados.</p></div></div><table><thead><tr><th>Abogado</th><th>Saldo</th><th>Ajustar</th></tr></thead><tbody>${abogados.map(a=>`<tr><td>${esc(a.name||a.email)}</td><td class="mono">${a.credits}</td><td><div style="display:flex;gap:6px"><button class="btn btn-ink btn-sm" onclick="ajustarCreditos('${a._id}',10)">+10</button><button class="btn btn-outline btn-sm" onclick="ajustarCreditos('${a._id}',-10)">-10</button></div></td></tr>`).join('')}</tbody></table>`;
 
-    document.getElementById('admin-transferencias').innerHTML = `<div class="admin-section-head"><div><h3>Transferencias</h3><p>Aprueba solo después de confirmar el abono en la cuenta bancaria.</p></div><span class="pill pill-neutral">${transfers.length} registros</span></div>${transfers.length?`<table><thead><tr><th>Usuario</th><th>Referencia</th><th>Producto</th><th>Monto</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${transfers.map(t=>`<tr><td>${esc(t.user?.name||t.user?.email||'—')}</td><td class="mono">${esc(t.reference)}</td><td>${t.kind==='plan'?'Plan':'Créditos'} · ${esc(t.productId)}</td><td>${fmtMoney(t.amount)}</td><td><span class="pill ${t.status==='approved'?'pill-forest':t.status==='rejected'?'pill-neutral':'pill-brass'}">${esc(t.status)}</span></td><td><div class="admin-action-row">${t.proof?.path?`<button class="btn btn-outline btn-sm" onclick="verComprobante('${t._id}')">Comprobante</button>`:''}${!['approved','rejected'].includes(t.status)?`<button class="btn btn-forest btn-sm" onclick="revisarTransferencia('${t._id}','approve')">Aprobar</button><button class="btn btn-outline btn-sm" onclick="revisarTransferencia('${t._id}','reject')">Rechazar</button>`:''}</div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No hay transferencias registradas.</div>'}`;
+    document.getElementById('admin-transferencias').innerHTML = `<div class="admin-section-head"><div><h3>Transferencias</h3><p>Aprueba solo después de confirmar el abono en la cuenta bancaria.</p></div><span class="pill pill-neutral">${transfers.length} registros</span></div>${transfers.length?`<table><thead><tr><th>Usuario</th><th>RUT origen</th><th>Referencia</th><th>Producto</th><th>Monto</th><th>Estado</th><th>Validación</th><th>Acciones</th></tr></thead><tbody>${transfers.map(t=>`<tr><td>${esc(t.user?.name||t.user?.email||'—')}</td><td>${esc(t.payerRutDisplay||t.user?.rut||'—')}</td><td class="mono">${esc(t.reference)}</td><td>${t.kind==='plan'?'Plan':'Créditos'} · ${esc(t.productId)}</td><td>${fmtMoney(t.amount)}</td><td><span class="pill ${t.status==='approved'?'pill-forest':t.status==='rejected'?'pill-neutral':'pill-brass'}">${esc(t.status)}</span></td><td>${t.verificationSource==='provider_webhook'?'Automática':t.verificationSource==='manual'?'Manual':'Pendiente'}</td><td><div class="admin-action-row">${t.proof?.path?`<button class="btn btn-outline btn-sm" onclick="verComprobante('${t._id}')">Comprobante</button>`:''}${!['approved','rejected'].includes(t.status)?`<button class="btn btn-forest btn-sm" onclick="revisarTransferencia('${t._id}','approve')">Aprobar</button><button class="btn btn-outline btn-sm" onclick="revisarTransferencia('${t._id}','reject')">Rechazar</button>`:''}</div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No hay transferencias registradas.</div>'}`;
+
+    const purchaseRows = purchases.purchases || [];
+    const purchaseTotals = purchases.totals || {};
+    document.getElementById('admin-compras').innerHTML = `<div class="admin-section-head"><div><h3>Compras y auditoría JSON</h3><p>Revisa Webpay, Oneclick y transferencias. “Pago confirmado” significa que existe evidencia registrada directamente del proveedor/conciliación.</p></div><span class="pill pill-neutral">${purchaseRows.length} compras</span></div><div class="purchase-audit-stats"><div><span>Total</span><strong>${Number(purchaseTotals.purchases||0)}</strong></div><div><span>Aprobadas</span><strong>${Number(purchaseTotals.approved||0)}</strong></div><div><span>Confirmadas proveedor</span><strong>${Number(purchaseTotals.providerVerified||0)}</strong></div><div><span>Requieren revisión</span><strong>${Number(purchaseTotals.needsReview||0)}</strong></div></div>${purchaseRows.length?`<div class="purchase-audit-table-wrap"><table><thead><tr><th>Fecha</th><th>Abogado</th><th>Método</th><th>Producto</th><th>Monto</th><th>Estado</th><th>Pago</th><th>Detalle</th></tr></thead><tbody>${purchaseRows.map(p=>`<tr><td>${p.createdAt?new Date(p.createdAt).toLocaleString('es-CL'):'—'}</td><td><strong>${esc(p.user?.name||p.user?.email||'—')}</strong><br><span class="muted">${esc(p.user?.rut||'Sin RUT')}</span></td><td>${esc(p.method||p.provider||'—')}</td><td>${esc(p.productId||p.kind||'—')} · ${Number(p.credits||0)} créditos</td><td>${fmtMoney(p.amount)}</td><td><span class="pill ${p.status==='approved'?'pill-forest':p.status==='failed'||p.status==='rejected'?'pill-neutral':'pill-brass'}">${esc(p.status)}</span></td><td>${verificationBadge(p)}</td><td><button class="btn btn-outline btn-sm" onclick="verCompraJson('${p.source}','${p.id}')">Ver JSON</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Todavía no hay compras registradas.</div>'}`;
+
 
     const sec = security || {};
     document.getElementById('admin-seguridad').innerHTML = `<div class="admin-section-head"><div><h3>Seguridad</h3><p>Resumen antifraude y protección de cuentas. Las IP y dispositivos se almacenan solo como hashes.</p></div><span class="pill pill-forest">Protección activa</span></div><div class="security-admin-grid"><div><span>Intentos fallidos · 24 h</span><strong>${Number(sec.failedLogins24h||0)}</strong></div><div><span>Bloqueos · 24 h</span><strong>${Number(sec.blocked24h||0)}</strong></div><div><span>Cuentas bloqueadas ahora</span><strong>${Number(sec.lockedAccounts||0)}</strong></div><div><span>Bonos otorgados · 30 días</span><strong>${Number(sec.bonusesGranted30d||0)}</strong></div><div><span>Bonos evitados · 30 días</span><strong>${Number(sec.bonusesDenied30d||0)}</strong></div></div><div class="security-admin-note">El sistema limita intentos de acceso y registro, evita reutilizar el bono desde el mismo dispositivo/correo y aplica un límite por red configurable.</div>`;
