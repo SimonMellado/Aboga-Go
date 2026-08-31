@@ -66,6 +66,7 @@ function continuarCasoPublico() {
   localStorage.setItem('abogago_pending_case', selectedPublicCase);
   if (!currentUser) { openLoginModal(); return toast('Tu caso quedó seleccionado. Inicia sesión o crea una cuenta para publicarlo gratis.'); }
   if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden');
+  if (isPrivilegedStaffLawyer()) return toast('La vista de cliente para administración es solo lectura');
   if (currentUser.role !== 'cliente') return toast('Para publicar una consulta necesitas una cuenta de cliente');
   switchView('cliente');
   setTimeout(() => { applyPendingPublicCase(); document.getElementById('c-tipo')?.scrollIntoView({behavior:'smooth',block:'center'}); }, 120);
@@ -105,7 +106,7 @@ function hideAllViews() { ['landing', 'casos', 'cliente', 'abogado', 'cuenta'].f
 
 function switchView(view) {
   if (view === 'admin') { window.location.href = 'admin.html'; return; }
-  if (view === 'cliente' && (!currentUser || currentUser.role !== 'cliente')) return irACliente();
+  if (view === 'cliente' && (!currentUser || (currentUser.role !== 'cliente' && !isPrivilegedStaffLawyer()))) return irACliente();
   if (view === 'abogado' && (!currentUser || currentUser.role !== 'abogado')) return irAAbogado();
   if (view === 'cuenta' && !currentUser) return openLoginModal();
   if (view === 'casos') renderPublicCaseBrowser();
@@ -290,11 +291,7 @@ function actualizarNavSesion() {
   actions.innerHTML = `<button class="nav-icon-btn" onclick="toggleNotifications()" aria-label="Notificaciones">🔔<span id="notification-count" class="notification-count hidden">0</span></button>`;
   if (isStaffUser()) {
     const label = staffRoleOf() === 'creador' ? 'Panel creador' : staffRoleOf() === 'moderador' ? 'Panel moderador' : 'Panel admin';
-    if (isPrivilegedStaffLawyer()) {
-      session.innerHTML = `<button class="nav-btn ghost" onclick="switchView('abogado')">Panel abogado</button><button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
-    } else {
-      session.innerHTML = `<button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
-    }
+    session.innerHTML = `<button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
     return;
   }
   session.innerHTML = `<button class="nav-btn ghost" onclick="switchView('cuenta')">${esc(currentUser.firstName || currentUser.name || 'Mi cuenta')} ${tier}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
@@ -354,7 +351,7 @@ async function elegirRol(role) {
   } catch (e) { toast(e.error || 'No se pudo completar la cuenta'); }
 }
 
-function irACliente() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión para publicar gratis'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'cliente') return toast('Esta sección es para clientes'); switchView('cliente'); }
+function irACliente() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión para publicar gratis'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'cliente' && !isPrivilegedStaffLawyer()) return toast('Esta sección es para clientes'); switchView('cliente'); }
 function irAAbogado() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión como abogado'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'abogado') return toast('Esta sección es para abogados'); switchView('abogado'); }
 
 function bindChipGroup(selector) { document.querySelectorAll(`${selector} .radio-chip`).forEach(c => c.addEventListener('click', () => { document.querySelectorAll(`${selector} .radio-chip`).forEach(x => x.classList.remove('sel')); c.classList.add('sel'); })); }
@@ -382,8 +379,31 @@ async function publicarCausa() {
   } catch (e) { toast(e.error || 'No se pudo publicar'); }
 }
 
+function setClientStaffPreview(enabled) {
+  const banner = document.getElementById('client-staff-preview');
+  if (banner) banner.classList.toggle('hidden', !enabled);
+  const form = document.querySelector('#view-cliente .form-card');
+  if (!form) return;
+  form.classList.toggle('staff-preview-form', enabled);
+  form.querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = enabled; });
+  form.querySelectorAll('.radio-chip').forEach(el => { el.classList.toggle('staff-preview-disabled', enabled); });
+}
+
 async function cargarPortalCliente() {
-  if (!currentUser || currentUser.role !== 'cliente') return;
+  if (!currentUser) return;
+  if (isPrivilegedStaffLawyer()) {
+    setClientStaffPreview(true);
+    document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>Vista ${staffRoleOf() === 'creador' ? 'creador' : 'admin'}`;
+    const clienteCreditos = document.getElementById('cliente-creditos');
+    if (clienteCreditos) clienteCreditos.textContent = '—';
+    document.getElementById('stat-causas').textContent = '—';
+    document.getElementById('stat-contactos').textContent = '—';
+    const box = document.getElementById('cliente-causas');
+    if (box) box.innerHTML = '<div class="card empty staff-preview-empty"><strong>Vista del Portal cliente</strong><span>Esta vista es solo de demostración para administración. Para revisar las consultas reales de una cuenta, entra a Panel admin → Usuarios y abre su portal.</span></div>';
+    return;
+  }
+  if (currentUser.role !== 'cliente') return;
+  setClientStaffPreview(false);
   document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>${esc(currentUser.name || currentUser.email)}`;
   const nameInput = document.getElementById('c-nombre'); const emailInput = document.getElementById('c-email');
   if (nameInput && !nameInput.value) nameInput.value = currentUser.name || `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim();

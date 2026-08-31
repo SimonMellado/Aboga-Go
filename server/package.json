@@ -1,8 +1,8 @@
 {
   "name": "aboga-go-api",
-  "version": "7.0.2",
+  "version": "7.0.3",
   "private": true,
-  "description": "Backend ABOGA GO V7.0.2 — versión pública reforzada, autenticación por perfil, pagos idempotentes y automatizaciones resilientes",
+  "description": "Backend ABOGA GO V7.0.3 — versión pública reforzada, autenticación por perfil, pagos idempotentes y automatizaciones resilientes",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
