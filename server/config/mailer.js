@@ -2,51 +2,137 @@
 const nodemailer = require('nodemailer');
 
 let transporter;
+let transporterFingerprint = '';
+
+function env(name, fallback = '') {
+  return String(process.env[name] || fallback).trim();
+}
+
+function smtpConfig() {
+  const host = env('SMTP_HOST', 'authsmtp.securemail.pro');
+  const port = Number(env('SMTP_PORT', '465'));
+  const user = env('SMTP_USER');
+  const pass = env('SMTP_PASS');
+  const secureRaw = env('SMTP_SECURE', port === 465 ? 'true' : 'false').toLowerCase();
+  const secure = secureRaw === 'true' || secureRaw === '1' || secureRaw === 'yes';
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('SMTP_PORT inválido');
+  }
+
+  return { host, port, user, pass, secure };
+}
 
 function getTransporter() {
-  if (transporter) return transporter;
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) return null;
-  transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
+  const cfg = smtpConfig();
+  if (!cfg.host || !cfg.user || !cfg.pass) return null;
+
+  const fingerprint = `${cfg.host}:${cfg.port}:${cfg.secure}:${cfg.user}`;
+  if (transporter && transporterFingerprint === fingerprint) return transporter;
+
+  transporter = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: { user: cfg.user, pass: cfg.pass },
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 50,
+    connectionTimeout: 12_000,
+    greetingTimeout: 12_000,
+    socketTimeout: 20_000,
+    tls: { servername: cfg.host, minVersion: 'TLSv1.2' },
+  });
+  transporterFingerprint = fingerprint;
   return transporter;
 }
 
-async function sendCode({ to, code, purpose = 'register' }) {
+function senderAddress() {
+  const configured = env('MAIL_FROM');
+  if (configured) return configured;
+  const user = env('SMTP_USER');
+  return user ? `ABOGA GO <${user}>` : '';
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+async function verifyMailer() {
   const tx = getTransporter();
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
-  const isReset = purpose === 'password_reset';
+  if (!tx) return { configured: false, ready: false, error: 'SMTP incompleto' };
+  try {
+    await tx.verify();
+    return { configured: true, ready: true };
+  } catch (err) {
+    return { configured: true, ready: false, error: err?.message || 'SMTP no disponible' };
+  }
+}
+
+async function deliver(message) {
+  const tx = getTransporter();
   if (!tx) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[DEV] Código ${isReset ? 'de recuperación' : 'de verificación'} para ${to}: ${code}`);
+      console.log(`[DEV MAIL] ${message.to}: ${message.subject}`);
       return { devMode: true };
     }
     throw new Error('El servicio de correo no está configurado');
   }
+
+  const from = senderAddress();
+  if (!from) throw new Error('MAIL_FROM o SMTP_USER no está configurado');
+
+  const replyTo = env('MAIL_REPLY_TO');
+  const payload = { ...message, from };
+  if (replyTo) payload.replyTo = replyTo;
+
+  try {
+    const info = await tx.sendMail(payload);
+    return { devMode: false, messageId: info.messageId };
+  } catch (firstError) {
+    transporter = null;
+    transporterFingerprint = '';
+    const retryTx = getTransporter();
+    if (!retryTx) throw firstError;
+    try {
+      const info = await retryTx.sendMail(payload);
+      return { devMode: false, messageId: info.messageId };
+    } catch (secondError) {
+      secondError.cause = firstError;
+      throw secondError;
+    }
+  }
+}
+
+async function sendCode({ to, code, purpose = 'register' }) {
+  const isReset = purpose === 'password_reset';
   const title = isReset ? 'Recupera tu contraseña' : 'Verifica tu correo';
-  const intro = isReset ? 'Usa este código para crear una nueva contraseña en ABOGA GO.' : 'Usa este código para terminar de crear tu cuenta en ABOGA GO.';
-  await tx.sendMail({
-    from,
+  const intro = isReset
+    ? 'Usa este código para crear una nueva contraseña en ABOGA GO.'
+    : 'Usa este código para terminar de crear tu cuenta en ABOGA GO.';
+  const safeCode = escapeHtml(code);
+
+  return deliver({
     to,
     subject: `${title} — ABOGA GO`,
-    text: `Tu código es ${code}. Expira en 10 minutos.`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:28px;color:#0f172a"><h2 style="margin:0 0 8px">${title}</h2><p style="color:#64748b">${intro}</p><div style="font-size:34px;letter-spacing:8px;font-weight:800;background:#f1f5f9;padding:18px 22px;border-radius:12px;text-align:center;margin:24px 0">${code}</div><p style="font-size:13px;color:#64748b">El código expira en 10 minutos. Si no solicitaste esta acción, ignora este mensaje.</p></div>`
+    text: `ABOGA GO\n\n${title}\n\nTu código es ${code}.\nExpira en 10 minutos.\n\nSi no solicitaste esta acción, ignora este mensaje.`,
+    html: `<div style="background:#f8fafc;padding:32px 14px;font-family:Arial,sans-serif;color:#0f172a"><div style="max-width:540px;margin:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden"><div style="padding:24px 28px;background:#0f172a;color:#ffffff"><div style="font-size:12px;letter-spacing:2px;font-weight:700;color:#a5b4fc">ABOGA GO</div><div style="font-size:24px;font-weight:800;margin-top:6px">${title}</div></div><div style="padding:28px"><p style="margin:0;color:#475569;line-height:1.6">${escapeHtml(intro)}</p><div style="font-size:36px;letter-spacing:10px;font-weight:800;background:#eef2ff;color:#312e81;padding:20px;border-radius:14px;text-align:center;margin:26px 0">${safeCode}</div><p style="margin:0;font-size:13px;color:#64748b;line-height:1.6">El código expira en 10 minutos. Nunca compartas este código con otra persona. Si no solicitaste esta acción, puedes ignorar este correo.</p></div><div style="padding:18px 28px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8">ABOGA GO · Marketplace legal en Chile · abogago.online</div></div></div>`
   });
-  return { devMode: false };
 }
 
 async function sendTransactional({ to, subject, text }) {
-  const tx = getTransporter();
-  if (!tx) { if (process.env.NODE_ENV !== 'production') { console.log(`[DEV MAIL] ${to}: ${subject}`); return { devMode: true }; } return { skipped: true }; }
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
-  const safe = String(text || '').replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]));
-  await tx.sendMail({ from, to, subject: `${subject} — ABOGA GO`, text, html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:28px;color:#0f172a"><h2 style="margin:0 0 16px">${subject}</h2><p style="line-height:1.6;color:#475569">${safe}</p><p style="font-size:12px;color:#94a3b8;margin-top:26px">Mensaje automático de ABOGA GO.</p></div>` });
-  return { devMode: false };
+  const safeText = escapeHtml(text).replace(/\n/g, '<br>');
+  return deliver({
+    to,
+    subject: `${subject} — ABOGA GO`,
+    text,
+    html: `<div style="background:#f8fafc;padding:30px 14px;font-family:Arial,sans-serif;color:#0f172a"><div style="max-width:560px;margin:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:28px"><div style="font-size:12px;letter-spacing:2px;font-weight:700;color:#4f46e5;margin-bottom:8px">ABOGA GO</div><h2 style="margin:0 0 16px">${escapeHtml(subject)}</h2><p style="line-height:1.65;color:#475569">${safeText}</p><p style="font-size:12px;color:#94a3b8;margin-top:26px">Mensaje automático de ABOGA GO.</p></div></div>`
+  });
 }
 
 async function sendLoginCode({ to, code }) { return sendCode({ to, code, purpose: 'register' }); }
 async function sendResetCode({ to, code }) { return sendCode({ to, code, purpose: 'password_reset' }); }
 
-module.exports = { sendLoginCode, sendResetCode, sendTransactional };
+module.exports = { sendLoginCode, sendResetCode, sendTransactional, verifyMailer };

@@ -156,7 +156,7 @@ router.post('/local/register/request-code', async (req, res) => {
     const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
     const passwordHash = await bcrypt.hash(password, 12);
 
-    await EmailCode.create({
+    const record = await EmailCode.create({
       email,
       purpose: 'register',
       firstName,
@@ -166,7 +166,14 @@ router.post('/local/register/request-code', async (req, res) => {
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
 
-    const mailResult = await sendLoginCode({ to: email, code });
+    let mailResult;
+    try {
+      mailResult = await sendLoginCode({ to: email, code });
+    } catch (mailError) {
+      await EmailCode.deleteOne({ _id: record._id }).catch(() => {});
+      console.error('No se pudo enviar código de registro:', mailError.message);
+      return res.status(503).json({ error: 'No pudimos enviar el código por correo. Intenta nuevamente en unos minutos.' });
+    }
     res.json({
       ok: true,
       email,
@@ -383,8 +390,15 @@ router.post('/local/password/request-code', async (req, res) => {
     const recent = await EmailCode.findOne({ email, purpose: 'password_reset', used: false }).sort({ createdAt: -1 });
     if (recent && Date.now() - recent.createdAt.getTime() < 60_000) return res.status(429).json({ error: 'Espera 60 segundos antes de solicitar otro código' });
     const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
-    await EmailCode.create({ email, purpose: 'password_reset', codeHash: hashCode(email, code), expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
-    const mailResult = await sendResetCode({ to: email, code });
+    const record = await EmailCode.create({ email, purpose: 'password_reset', codeHash: hashCode(email, code), expiresAt: new Date(Date.now() + 10 * 60 * 1000) });
+    let mailResult;
+    try {
+      mailResult = await sendResetCode({ to: email, code });
+    } catch (mailError) {
+      await EmailCode.deleteOne({ _id: record._id }).catch(() => {});
+      console.error('No se pudo enviar código de recuperación:', mailError.message);
+      return res.status(503).json({ error: 'No pudimos enviar el código por correo. Intenta nuevamente en unos minutos.' });
+    }
     res.json({ ok: true, expiresIn: 600, devMode: Boolean(mailResult.devMode), message: 'Si existe una cuenta local, enviaremos un código al correo' });
   } catch (err) {
     console.error('password reset request:', err);

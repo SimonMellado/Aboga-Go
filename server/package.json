@@ -1,8 +1,8 @@
 {
   "name": "aboga-go-api",
-  "version": "6.10.14",
+  "version": "6.10.15",
   "private": true,
-  "description": "Backend ABOGA GO V6.10.14 — Render trust proxy corregido, Flow automatizado y transferencia Banco Falabella",
+  "description": "Backend ABOGA GO V6.10.15 — códigos de verificación por SMTP Nominalia, Render trust proxy, Flow y pagos automatizados",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

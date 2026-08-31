@@ -11,6 +11,7 @@ const passport = require('./config/passport');
 const { iniciarCronRenovacion } = require('./jobs/renewPremium');
 const { ensureDeviceCookie } = require('./utils/security');
 const { ensureCreatorAccount } = require('./utils/ensureCreator');
+const { verifyMailer } = require('./config/mailer');
 
 function requireProductionEnv() {
   if (process.env.NODE_ENV !== 'production') return;
@@ -104,7 +105,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.14', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.15', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);
@@ -115,6 +116,11 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 connectDB().then(async () => {
   await ensureCreatorAccount();
+  if (String(process.env.MAIL_VERIFY_ON_START || 'true').toLowerCase() === 'true') {
+    const mailStatus = await verifyMailer();
+    if (mailStatus.ready) console.log('SMTP ABOGA GO conectado correctamente');
+    else console.error(`SMTP ABOGA GO no disponible: ${mailStatus.error || 'configuración incompleta'}`);
+  }
   const server = app.listen(PORT, () => {
     console.log(`ABOGA GO API lista en puerto ${PORT}`);
     iniciarCronRenovacion();
