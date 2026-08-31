@@ -1,57 +1,15 @@
 /* Creado por LimónStudioss. s.melladoo */
-const nodemailer = require('nodemailer');
-
-let transporter;
-let transporterFingerprint = '';
 
 function env(name, fallback = '') {
   return String(process.env[name] || fallback).trim();
 }
 
-function smtpConfig() {
-  const host = env('SMTP_HOST', 'authsmtp.securemail.pro');
-  const port = Number(env('SMTP_PORT', '465'));
-  const user = env('SMTP_USER');
-  const pass = env('SMTP_PASS');
-  const secureRaw = env('SMTP_SECURE', port === 465 ? 'true' : 'false').toLowerCase();
-  const secure = secureRaw === 'true' || secureRaw === '1' || secureRaw === 'yes';
-
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('SMTP_PORT inválido');
-  }
-
-  return { host, port, user, pass, secure };
-}
-
-function getTransporter() {
-  const cfg = smtpConfig();
-  if (!cfg.host || !cfg.user || !cfg.pass) return null;
-
-  const fingerprint = `${cfg.host}:${cfg.port}:${cfg.secure}:${cfg.user}`;
-  if (transporter && transporterFingerprint === fingerprint) return transporter;
-
-  transporter = nodemailer.createTransport({
-    host: cfg.host,
-    port: cfg.port,
-    secure: cfg.secure,
-    auth: { user: cfg.user, pass: cfg.pass },
-    pool: true,
-    maxConnections: 3,
-    maxMessages: 50,
-    connectionTimeout: 12_000,
-    greetingTimeout: 12_000,
-    socketTimeout: 20_000,
-    tls: { servername: cfg.host, minVersion: 'TLSv1.2' },
-  });
-  transporterFingerprint = fingerprint;
-  return transporter;
-}
-
-function senderAddress() {
-  const configured = env('MAIL_FROM');
-  if (configured) return configured;
-  const user = env('SMTP_USER');
-  return user ? `ABOGA GO <${user}>` : '';
+function resendConfig() {
+  const apiKey = env('RESEND_API_KEY');
+  const fromEmail = env('MAIL_FROM_EMAIL', 'no-reply@abogago.online');
+  const fromName = env('MAIL_FROM_NAME', 'ABOGA GO');
+  const replyTo = env('MAIL_REPLY_TO');
+  return { apiKey, fromEmail, fromName, replyTo };
 }
 
 function escapeHtml(value) {
@@ -61,49 +19,63 @@ function escapeHtml(value) {
 }
 
 async function verifyMailer() {
-  const tx = getTransporter();
-  if (!tx) return { configured: false, ready: false, error: 'SMTP incompleto' };
-  try {
-    await tx.verify();
-    return { configured: true, ready: true };
-  } catch (err) {
-    return { configured: true, ready: false, error: err?.message || 'SMTP no disponible' };
-  }
+  const cfg = resendConfig();
+  if (!cfg.apiKey) return { configured: false, ready: false, provider: 'resend', error: 'RESEND_API_KEY no configurada' };
+  if (!cfg.fromEmail || !cfg.fromEmail.includes('@')) return { configured: false, ready: false, provider: 'resend', error: 'MAIL_FROM_EMAIL inválido' };
+  return { configured: true, ready: true, provider: 'resend', from: `${cfg.fromName} <${cfg.fromEmail}>` };
 }
 
 async function deliver(message) {
-  const tx = getTransporter();
-  if (!tx) {
+  const cfg = resendConfig();
+
+  if (!cfg.apiKey) {
     if (process.env.NODE_ENV !== 'production') {
       console.log(`[DEV MAIL] ${message.to}: ${message.subject}`);
-      return { devMode: true };
+      return { devMode: true, provider: 'dev' };
     }
-    throw new Error('El servicio de correo no está configurado');
+    throw new Error('RESEND_API_KEY no está configurada');
   }
 
-  const from = senderAddress();
-  if (!from) throw new Error('MAIL_FROM o SMTP_USER no está configurado');
+  const payload = {
+    from: `${cfg.fromName} <${cfg.fromEmail}>`,
+    to: [message.to],
+    subject: message.subject,
+    html: message.html,
+    text: message.text,
+  };
 
-  const replyTo = env('MAIL_REPLY_TO');
-  const payload = { ...message, from };
-  if (replyTo) payload.replyTo = replyTo;
+  if (cfg.replyTo) payload.reply_to = cfg.replyTo;
 
+  let response;
   try {
-    const info = await tx.sendMail(payload);
-    return { devMode: false, messageId: info.messageId };
-  } catch (firstError) {
-    transporter = null;
-    transporterFingerprint = '';
-    const retryTx = getTransporter();
-    if (!retryTx) throw firstError;
-    try {
-      const info = await retryTx.sendMail(payload);
-      return { devMode: false, messageId: info.messageId };
-    } catch (secondError) {
-      secondError.cause = firstError;
-      throw secondError;
-    }
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${cfg.apiKey}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'ABOGA-GO/6.10.17',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (err) {
+    const e = new Error(`No se pudo conectar con Resend: ${err?.message || 'error de red'}`);
+    e.cause = err;
+    throw e;
   }
+
+  let data = {};
+  const raw = await response.text();
+  if (raw) {
+    try { data = JSON.parse(raw); } catch { data = { raw }; }
+  }
+
+  if (!response.ok) {
+    const detail = data?.message || data?.error || data?.name || `HTTP ${response.status}`;
+    throw new Error(`Resend rechazó el correo: ${detail}`);
+  }
+
+  return { devMode: false, provider: 'resend', messageId: data?.id || '' };
 }
 
 async function sendCode({ to, code, purpose = 'register' }) {

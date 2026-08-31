@@ -43,7 +43,7 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['sin_definir', 'cliente', 'abogado', 'admin'], default: 'sin_definir' },
   staffRole: { type: String, enum: ['none', 'moderador', 'admin', 'creador'], default: 'none', index: true },
   rut: String,
-  rutNormalized: { type: String, default: undefined, index: true },
+  rutNormalized: { type: String, default: undefined },
   tituloDocUrl: String,
   titleDocument: {
     url: { type: String, default: '' },

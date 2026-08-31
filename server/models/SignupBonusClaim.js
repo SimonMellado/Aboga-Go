@@ -2,9 +2,9 @@
 const mongoose = require('mongoose');
 const signupBonusClaimSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  emailHash: { type: String, required: true, index: true },
+  emailHash: { type: String, required: true },
   ipHash: { type: String, default: '', index: true },
-  deviceHash: { type: String, default: '', index: true },
+  deviceHash: { type: String, default: '' },
   granted: { type: Boolean, default: false, index: true },
   credits: { type: Number, default: 0 },
   reason: { type: String, default: '' },

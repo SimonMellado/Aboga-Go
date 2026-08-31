@@ -12,10 +12,11 @@ const { iniciarCronRenovacion } = require('./jobs/renewPremium');
 const { ensureDeviceCookie } = require('./utils/security');
 const { ensureCreatorAccount } = require('./utils/ensureCreator');
 const { verifyMailer } = require('./config/mailer');
+const { getFlowConfig } = require('./config/flow');
 
 function requireProductionEnv() {
   if (process.env.NODE_ENV !== 'production') return;
-  const required = ['FRONTEND_URL','BACKEND_URL','MONGODB_URI','JWT_SECRET','SECURITY_PEPPER','SMTP_HOST','SMTP_USER','SMTP_PASS','MAIL_FROM','TBK_WEBPAY_COMMERCE_CODE','TBK_WEBPAY_API_KEY','TBK_ONECLICK_COMMERCE_CODE','TBK_ONECLICK_API_KEY','CREATOR_EMAIL','CREATOR_PASSWORD'];
+  const required = ['FRONTEND_URL','BACKEND_URL','MONGODB_URI','JWT_SECRET','SECURITY_PEPPER','RESEND_API_KEY','MAIL_FROM_EMAIL','MAIL_FROM_NAME','TBK_WEBPAY_COMMERCE_CODE','TBK_WEBPAY_API_KEY','TBK_ONECLICK_COMMERCE_CODE','TBK_ONECLICK_API_KEY','CREATOR_EMAIL','CREATOR_PASSWORD'];
   const missing = required.filter(k => !String(process.env[k] || '').trim());
   if (missing.length) throw new Error(`Faltan variables obligatorias de producción: ${missing.join(', ')}`);
   if (String(process.env.JWT_SECRET).length < 48) throw new Error('JWT_SECRET debe tener al menos 48 caracteres en producción');
@@ -105,7 +106,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.15', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.17', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);
@@ -115,11 +116,13 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 connectDB().then(async () => {
+  const flowConfig = getFlowConfig();
+  console.log(`Flow ${flowConfig.enabled ? (flowConfig.configured ? 'habilitado y configurado' : 'habilitado pero incompleto') : 'deshabilitado'}`);
   await ensureCreatorAccount();
   if (String(process.env.MAIL_VERIFY_ON_START || 'true').toLowerCase() === 'true') {
     const mailStatus = await verifyMailer();
-    if (mailStatus.ready) console.log('SMTP ABOGA GO conectado correctamente');
-    else console.error(`SMTP ABOGA GO no disponible: ${mailStatus.error || 'configuración incompleta'}`);
+    if (mailStatus.ready) console.log(`Resend ABOGA GO configurado correctamente: ${mailStatus.from || 'remitente listo'}`);
+    else console.error(`Resend ABOGA GO no disponible: ${mailStatus.error || 'configuración incompleta'}`);
   }
   const server = app.listen(PORT, () => {
     console.log(`ABOGA GO API lista en puerto ${PORT}`);

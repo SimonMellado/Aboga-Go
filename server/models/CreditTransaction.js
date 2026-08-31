@@ -10,9 +10,9 @@ const creditTransactionSchema = new mongoose.Schema({
   plan: { type: String, enum: ['premium', 'pro'], default: undefined },
   productId: { type: String, default: undefined },
 
-  buyOrder: { type: String, index: true },
-  webpayToken: { type: String, index: true },
-  flowToken: { type: String, index: true },
+  buyOrder: { type: String },
+  webpayToken: { type: String },
+  flowToken: { type: String },
   flowOrder: { type: Number, index: true },
 
   status: { type: String, enum: ['pending', 'processing', 'approved', 'failed'], default: 'pending' },

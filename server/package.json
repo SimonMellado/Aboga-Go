@@ -1,8 +1,8 @@
 {
   "name": "aboga-go-api",
-  "version": "6.10.15",
+  "version": "6.10.17",
   "private": true,
-  "description": "Backend ABOGA GO V6.10.15 — códigos de verificación por SMTP Nominalia, Render trust proxy, Flow y pagos automatizados",
+  "description": "Backend ABOGA GO V6.10.17 — códigos por Resend HTTPS, índices Mongoose corregidos, Render trust proxy, Flow y pagos automatizados",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -20,7 +20,6 @@
     "passport-apple": "^2.0.2",
     "passport-google-oauth20": "^2.0.0",
     "transbank-sdk": "^6.1.0",
-    "nodemailer": "^6.9.15",
     "bcryptjs": "^2.4.3",
     "helmet": "^8.1.0",
     "express-rate-limit": "^7.5.0",
