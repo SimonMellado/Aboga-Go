@@ -37,7 +37,16 @@ async function sendCode({ to, code, purpose = 'register' }) {
   return { devMode: false };
 }
 
+async function sendTransactional({ to, subject, text }) {
+  const tx = getTransporter();
+  if (!tx) { if (process.env.NODE_ENV !== 'production') { console.log(`[DEV MAIL] ${to}: ${subject}`); return { devMode: true }; } return { skipped: true }; }
+  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
+  const safe = String(text || '').replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]));
+  await tx.sendMail({ from, to, subject: `${subject} — ABOGA GO`, text, html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:28px;color:#0f172a"><h2 style="margin:0 0 16px">${subject}</h2><p style="line-height:1.6;color:#475569">${safe}</p><p style="font-size:12px;color:#94a3b8;margin-top:26px">Mensaje automático de ABOGA GO.</p></div>` });
+  return { devMode: false };
+}
+
 async function sendLoginCode({ to, code }) { return sendCode({ to, code, purpose: 'register' }); }
 async function sendResetCode({ to, code }) { return sendCode({ to, code, purpose: 'password_reset' }); }
 
-module.exports = { sendLoginCode, sendResetCode };
+module.exports = { sendLoginCode, sendResetCode, sendTransactional };

@@ -9,11 +9,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="512x512" href="assets/favicon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
 </head>
 <body>
 
 <nav class="nav">
-  <div class="brand"><img src="assets/logo-abogago.jpeg" alt="AbogaGo SpA" style="height:38px; width:38px; object-fit:cover; border-radius:8px;"> Panel Admin</div>
+  <div class="brand"><img src="assets/aboga-go-logo.jpg" alt="AbogaGo SpA" style="height:38px; width:38px; object-fit:cover; border-radius:8px;"> Panel Admin</div>
   <div class="nav-links">
     <a href="index.html" class="nav-btn ghost">← Volver al sitio</a>
   </div>
@@ -33,21 +36,27 @@
     <div class="app-head">
       <div>
         <h1>Panel de administración</h1>
-        <div class="sub">Gestión de usuarios, verificación y causas activas.</div>
+        <div class="sub">Gestión de usuarios, equipo interno, verificación, pagos y causas.</div>
       </div>
     </div>
 
     <div class="tabbar">
-      <div class="tab active" data-adm="usuarios" onclick="setAdminTab('usuarios')">Usuarios</div>
-      <div class="tab" data-adm="verificacion" onclick="setAdminTab('verificacion')">Verificación abogados</div>
-      <div class="tab" data-adm="causas" onclick="setAdminTab('causas')">Causas activas</div>
-      <div class="tab" data-adm="creditos" onclick="setAdminTab('creditos')">Créditos</div>
+      <div class="tab active" data-adm="usuarios" data-permission="admin" onclick="setAdminTab('usuarios')">Usuarios</div>
+      <div class="tab" data-adm="verificacion" data-permission="review" onclick="setAdminTab('verificacion')">Verificación abogados</div>
+      <div class="tab" data-adm="causas" data-permission="admin" onclick="setAdminTab('causas')">Causas activas</div>
+      <div class="tab" data-adm="creditos" data-permission="admin" onclick="setAdminTab('creditos')">Créditos</div>
+      <div class="tab" data-adm="transferencias" data-permission="admin" onclick="setAdminTab('transferencias')">Transferencias</div>
+      <div class="tab" data-adm="seguridad" data-permission="admin" onclick="setAdminTab('seguridad')">Seguridad</div>
+      <div class="tab" data-adm="roles" data-permission="creator" onclick="setAdminTab('roles')">Agregar roles</div>
     </div>
 
     <div id="admin-usuarios" class="card"></div>
     <div id="admin-verificacion" class="card hidden"></div>
     <div id="admin-causas" class="card hidden"></div>
     <div id="admin-creditos" class="card hidden"></div>
+    <div id="admin-transferencias" class="card hidden"></div>
+    <div id="admin-seguridad" class="card hidden"></div>
+    <div id="admin-roles" class="card hidden"></div>
   </div>
 </section>
 

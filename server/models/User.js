@@ -41,13 +41,16 @@ const userSchema = new mongoose.Schema({
   authProviders: { type: [authProviderSchema], default: [] },
   emailVerified: { type: Boolean, default: false },
   role: { type: String, enum: ['sin_definir', 'cliente', 'abogado', 'admin'], default: 'sin_definir' },
+  staffRole: { type: String, enum: ['none', 'moderador', 'admin', 'creador'], default: 'none', index: true },
   rut: String,
+  rutNormalized: { type: String, default: undefined, index: true },
   tituloDocUrl: String,
   titleDocument: {
     url: { type: String, default: '' },
     originalName: { type: String, default: '' },
     mimeType: { type: String, default: '' },
-    uploadedAt: Date
+    uploadedAt: Date,
+    storagePath: { type: String, default: '' }
   },
   verified: { type: Boolean, default: false },
   verificationStatus: { type: String, enum: ['not_submitted', 'pending', 'verified', 'rejected'], default: 'not_submitted' },
@@ -57,11 +60,23 @@ const userSchema = new mongoose.Schema({
   lawyerProfile: { type: lawyerProfileSchema, default: () => ({}) },
   settings: { type: settingsSchema, default: () => ({}) },
   credits: { type: Number, default: 0 },
+  security: {
+    failedLoginAttempts: { type: Number, default: 0 },
+    lockUntil: Date,
+    tokenVersion: { type: Number, default: 0 },
+    lastLoginAt: Date,
+    lastLoginIpHash: { type: String, default: '' },
+    lastLoginDeviceHash: { type: String, default: '' },
+    signupBonusGrantedAt: Date,
+    passwordChangedAt: Date
+  },
   premium: {
     active: { type: Boolean, default: false },
     tier: { type: String, enum: ['premium', 'pro'], default: undefined },
     planStart: Date,
-    planEnd: Date
+    planEnd: Date,
+    autoRenew: { type: Boolean, default: true },
+    renewalLockUntil: Date
   },
   oneclick: {
     inscribed: { type: Boolean, default: false },
@@ -74,5 +89,6 @@ const userSchema = new mongoose.Schema({
 });
 
 userSchema.index({ provider: 1, providerId: 1 }, { unique: true });
+userSchema.index({ rutNormalized: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('User', userSchema);

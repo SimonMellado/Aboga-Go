@@ -19,6 +19,8 @@ let selectedPlan = 'premium';
 let activeProposalCaseId = null;
 let activeClientCaseId = null;
 let resendTimer = null;
+let selectedRegisterRole = 'cliente';
+let pendingRegisterLawyer = null;
 
 const PUBLIC_CASE_CATALOG = {
   'Casos más frecuentes': ['Pensión alimenticia','Inmigración en Chile','Divorcio','Herencias y posesiones efectivas','Deudas y embargos','Compra y arriendo de propiedades','Accidentes de tránsito','Abuso sexual y violación','Tuición','Juicio o reconocimiento de paternidad','Régimen de visitas','Defensa de derechos laborales','Despido injustificado','Robos y hurtos','Violencia intrafamiliar','Manejo en estado de ebriedad','Injurias y calumnias','Tráfico de drogas','Negligencia médica','Estafas y delitos económicos','Problemas entre vecinos'],
@@ -72,8 +74,31 @@ function continuarCasoPublico() {
 function esc(v = '') { return String(v).replace(/[&<>'"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch])); }
 function fmtDate(v) { return v ? new Date(v).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function fmtMoney(v) { return `$${Number(v || 0).toLocaleString('es-CL')}`; }
+function staffRoleOf(user = currentUser) { if (!user) return 'none'; if (user.staffRole && user.staffRole !== 'none') return user.staffRole; return user.role === 'admin' ? 'admin' : 'none'; }
+function isStaffUser(user = currentUser) { return ['creador','admin','moderador'].includes(staffRoleOf(user)); }
 function normalizePhoneForWa(v = '') { return String(v).replace(/\D/g, ''); }
 function toast(msg) { const el = document.getElementById('toast'); if (!el) return; el.textContent = msg; el.classList.add('show'); clearTimeout(el._timer); el._timer = setTimeout(() => el.classList.remove('show'), 3400); }
+function togglePassword(id, button) {
+  const input = document.getElementById(id);
+  if (!input) return;
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  if (button) button.textContent = show ? 'Ocultar' : 'Ver';
+}
+function updatePasswordStrength() {
+  const value = document.getElementById('register-password')?.value || '';
+  let score = 0;
+  if (value.length >= 8) score += 1;
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
+  if (/\d/.test(value)) score += 1;
+  if (/[^A-Za-z0-9]/.test(value) && value.length >= 12) score += 1;
+  const labels = ['Muy débil','Débil','Aceptable','Segura','Muy segura'];
+  const bar = document.getElementById('password-strength-bar');
+  const text = document.getElementById('password-strength-text');
+  if (bar) bar.style.width = `${Math.max(8, score * 25)}%`;
+  if (text) text.textContent = value ? labels[score] : 'Mínimo 8 caracteres. Recomendado: mayúscula, minúscula y número.';
+}
+
 function hideAllViews() { ['landing', 'casos', 'cliente', 'abogado', 'cuenta'].forEach(v => document.getElementById(`view-${v}`)?.classList.add('hidden')); }
 
 function switchView(view) {
@@ -108,6 +133,42 @@ function showLocalLogin() { document.getElementById('login-methods')?.classList.
 function showLocalRegister() { document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('local-login-form')?.classList.add('hidden'); document.getElementById('local-register-form')?.classList.remove('hidden'); document.getElementById('auth-tab-login')?.classList.remove('active'); document.getElementById('auth-tab-register')?.classList.add('active'); }
 function backToRegisterStep() { document.getElementById('login-code-step')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); showLocalRegister(); }
 function showPasswordReset() { document.getElementById('local-auth-step')?.classList.add('hidden'); document.getElementById('password-reset-step')?.classList.remove('hidden'); }
+function setRegisterRole(role) {
+  selectedRegisterRole = role === 'abogado' ? 'abogado' : 'cliente';
+  document.querySelectorAll('[data-register-role]').forEach(btn => {
+    const active = btn.dataset.registerRole === selectedRegisterRole;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  document.getElementById('register-lawyer-fields')?.classList.toggle('hidden', selectedRegisterRole !== 'abogado');
+}
+function showSelectedFile(input, targetId) {
+  const target = document.getElementById(targetId);
+  if (target) target.textContent = input?.files?.[0]?.name || 'PDF, JPG o PNG · máximo 8 MB';
+}
+function lawyerPayloadFrom(prefix) {
+  const value = id => document.getElementById(`${prefix}-${id}`)?.value?.trim() || '';
+  const checked = id => Boolean((document.getElementById(`${prefix}-${id}`) || (prefix === 'register-lawyer' ? document.getElementById(`register-${id}`) : null))?.checked);
+  return {
+    rut: value('rut'),
+    lawyerProfile: {
+      phone: value('phone'), region: value('region'), comuna: value('comuna'), university: value('university'),
+      titleYear: value('title-year') ? Number(value('title-year')) : undefined,
+      titleNumber: value('title-number'),
+      specialties: value('specialties').split(',').map(x => x.trim()).filter(Boolean),
+      serviceModes: [checked('mode-online') ? 'Online' : '', checked('mode-presencial') ? 'Presencial' : ''].filter(Boolean)
+    }
+  };
+}
+async function uploadLawyerDocument(inputId) {
+  const file = document.getElementById(inputId)?.files?.[0];
+  if (!file) throw { error: 'Debes subir tu certificado o título de abogado' };
+  const fd = new FormData(); fd.append('document', file);
+  const res = await fetch(`${API_BASE}/account/lawyer-title`, { method:'POST', credentials:'include', body:fd });
+  if (!res.ok) throw await res.json().catch(() => ({ error:'No se pudo subir el documento' }));
+  return res.json();
+}
+
 
 async function loginLocal() {
   try {
@@ -125,8 +186,15 @@ async function registerLocal() {
   const password = document.getElementById('register-password').value;
   const confirm = document.getElementById('register-password-confirm').value;
   if (password !== confirm) return toast('Las contraseñas no coinciden');
+  if (selectedRegisterRole === 'abogado') {
+    const payload = lawyerPayloadFrom('register-lawyer');
+    const declaration = document.getElementById('register-lawyer-declaration')?.checked;
+    const file = document.getElementById('register-lawyer-document')?.files?.[0];
+    if (!payload.rut || !payload.lawyerProfile.phone || !payload.lawyerProfile.region || !payload.lawyerProfile.comuna || !payload.lawyerProfile.university || !payload.lawyerProfile.specialties.length || !payload.lawyerProfile.serviceModes.length || !file || !declaration) return toast('Completa los antecedentes profesionales y acepta la declaración');
+    pendingRegisterLawyer = payload;
+  } else pendingRegisterLawyer = null;
   try {
-    await apiPost('/auth/local/register/request-code', { firstName, lastName, email, password });
+    await apiPost('/auth/local/register/request-code', { firstName, lastName, email, password, website: document.getElementById('register-website')?.value || '' });
     document.getElementById('local-auth-step').classList.add('hidden');
     document.getElementById('login-code-step').classList.remove('hidden');
     document.getElementById('code-email-label').textContent = email;
@@ -136,12 +204,33 @@ async function registerLocal() {
 }
 
 async function verifyRegisterCode() {
+  const btn = document.getElementById('verify-email-code');
   try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Verificando...'; }
     const data = await apiPost('/auth/local/register/verify-code', { email: document.getElementById('register-email').value.trim(), code: document.getElementById('auth-code').value.trim() });
     currentUser = data.user;
+    let bonusGranted = false;
+    if (data.needsRole) {
+      if (selectedRegisterRole === 'abogado' && pendingRegisterLawyer) {
+        if (btn) btn.textContent = 'Subiendo documento...';
+        const uploaded = await uploadLawyerDocument('register-lawyer-document');
+        currentUser = uploaded.user;
+        if (btn) btn.textContent = 'Enviando verificación...';
+        const roleData = await apiPost('/auth/elegir-rol', { role:'abogado', ...pendingRegisterLawyer, tituloDocUrl: uploaded.url });
+        currentUser = roleData.user;
+        bonusGranted = Boolean(roleData.bonusGranted);
+      } else {
+        const roleData = await apiPost('/auth/elegir-rol', { role:'cliente' });
+        currentUser = roleData.user;
+        bonusGranted = Boolean(roleData.bonusGranted);
+      }
+    }
     closeLoginModal();
+    if (selectedRegisterRole === 'abogado') toast(bonusGranted ? 'Cuenta creada con 10 créditos. Tus antecedentes quedaron en revisión.' : 'Cuenta creada. Tus antecedentes quedaron en revisión.');
+    else toast(bonusGranted ? 'Cuenta creada con 10 créditos de bienvenida' : 'Cuenta creada correctamente');
     afterLogin();
-  } catch (e) { toast(e.error || 'Código incorrecto'); }
+  } catch (e) { toast(e.error || 'No se pudo completar el registro'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Verificar y continuar'; } }
 }
 
 function startResendCountdown() {
@@ -171,7 +260,7 @@ async function restablecerPassword() {
 async function afterLogin() {
   actualizarNavSesion();
   cargarNotificaciones();
-  if (currentUser.role === 'admin') { window.location.href = 'admin.html'; return; }
+  if (isStaffUser()) { window.location.href = 'admin.html'; return; }
   if (currentUser.role === 'sin_definir') document.getElementById('role-modal')?.classList.remove('hidden');
   else if (currentUser.role === 'cliente' && localStorage.getItem('abogago_pending_case')) switchView('cliente');
   else switchView(currentUser.role === 'cliente' ? 'cliente' : currentUser.role === 'abogado' ? 'abogado' : 'landing');
@@ -186,8 +275,9 @@ function actualizarNavSesion() {
   if (!currentUser) { actions.innerHTML = ''; session.innerHTML = '<button class="nav-btn ghost" onclick="openLoginModal()">Ingresar</button>'; return; }
   const tier = currentUser.premium?.active ? `<span class="nav-premium-mini">${currentUser.premium.tier === 'pro' ? 'PRO' : 'PREMIUM'}</span>` : '';
   actions.innerHTML = `<button class="nav-icon-btn" onclick="toggleNotifications()" aria-label="Notificaciones">🔔<span id="notification-count" class="notification-count hidden">0</span></button>`;
-  if (currentUser.role === 'admin') {
-    session.innerHTML = `<button class="nav-btn admin-nav-btn" onclick="switchView('admin')">Panel admin</button><button class="nav-btn" onclick="logout()">Salir</button>`;
+  if (isStaffUser()) {
+    const label = staffRoleOf() === 'creador' ? 'Panel creador' : staffRoleOf() === 'moderador' ? 'Panel moderador' : 'Panel admin';
+    session.innerHTML = `<button class="nav-btn admin-nav-btn" onclick="switchView('admin')">${label}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
     return;
   }
   session.innerHTML = `<button class="nav-btn ghost" onclick="switchView('cuenta')">${esc(currentUser.firstName || currentUser.name || 'Mi cuenta')} ${tier}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
@@ -210,9 +300,10 @@ async function initSesion() {
   if (currentUser) cargarNotificaciones();
   const params = new URLSearchParams(location.search);
   if (params.get('admin') === '1' && !currentUser) setTimeout(() => openLoginModal(), 0);
-  if (params.get('admin') === '1' && currentUser?.role === 'admin') { window.location.href = 'admin.html'; return; }
+  if (params.get('admin') === '1' && isStaffUser()) { window.location.href = 'admin.html'; return; }
   if (params.get('login') === 'elegir_rol' && currentUser) document.getElementById('role-modal')?.classList.remove('hidden');
   if (params.get('pago') === 'exitoso') toast('Pago aprobado. Créditos agregados.');
+  if (params.get('pago') === 'procesando') toast('Pago recibido. Estamos terminando de acreditar tus créditos.');
   if (params.get('plan') === 'exitoso') toast('Plan activado correctamente.');
   if (params.get('pago') === 'fallido' || params.get('plan') === 'fallido') toast('El pago no fue aprobado.');
   const requestedView = params.get('view');
@@ -224,15 +315,22 @@ async function initSesion() {
 function mostrarFormAbogado() { document.getElementById('role-abogado-form')?.classList.remove('hidden'); }
 async function elegirRol(role) {
   try {
-    const payload = { role };
-    if (role === 'abogado') { payload.rut = document.getElementById('role-rut').value.trim(); payload.tituloDocUrl = document.getElementById('role-doc').value.trim(); }
+    let payload = { role };
+    if (role === 'abogado') {
+      payload = { role, ...lawyerPayloadFrom('role') };
+      if (!document.getElementById('role-lawyer-declaration')?.checked) return toast('Debes aceptar la declaración profesional');
+      const uploaded = await uploadLawyerDocument('role-doc-file');
+      currentUser = uploaded.user;
+      payload.tituloDocUrl = uploaded.url;
+    }
     const data = await apiPost('/auth/elegir-rol', payload);
     currentUser = data.user;
     document.getElementById('role-modal')?.classList.add('hidden');
     actualizarNavSesion();
-    switchView(role === 'cliente' ? 'cliente' : 'abogado');
-    if (role === 'abogado') setTimeout(() => { switchView('cuenta'); toast('Completa tu perfil profesional mientras verificamos tu cuenta'); }, 350);
-  } catch (e) { toast(e.error || 'No se pudo elegir el rol'); }
+    switchView(role === 'cliente' ? 'cliente' : 'cuenta');
+    const bonus = data.bonusGranted ? ' Recibiste 10 créditos de bienvenida.' : '';
+    toast((role === 'abogado' ? 'Antecedentes enviados. Te avisaremos cuando la revisión termine.' : 'Tu cuenta de cliente está lista.') + bonus);
+  } catch (e) { toast(e.error || 'No se pudo completar la cuenta'); }
 }
 
 function irACliente() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión para publicar gratis'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'cliente') return toast('Esta sección es para clientes'); switchView('cliente'); }
@@ -266,6 +364,11 @@ async function publicarCausa() {
 async function cargarPortalCliente() {
   if (!currentUser || currentUser.role !== 'cliente') return;
   document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>${esc(currentUser.name || currentUser.email)}`;
+  const nameInput = document.getElementById('c-nombre'); const emailInput = document.getElementById('c-email');
+  if (nameInput && !nameInput.value) nameInput.value = currentUser.name || `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim();
+  if (emailInput && !emailInput.value) emailInput.value = currentUser.email || '';
+  const clienteCreditos = document.getElementById('cliente-creditos');
+  if (clienteCreditos) clienteCreditos.textContent = currentUser.credits ?? 0;
   try { causasCliente = await apiGet('/cases/mias'); } catch (e) { causasCliente = []; toast(e.error || 'No se pudieron cargar tus causas'); }
   renderCliente();
 }
@@ -415,12 +518,63 @@ function setPlanSelection(tier) {
   if (total) total.textContent = fmtMoney(plan.price);
   if (desc) desc.textContent = `${plan.name} · ${plan.credits} créditos mensuales`;
   const btn = document.getElementById('plan-continue-btn');
-  if (btn) btn.textContent = `Continuar con ${plan.name}`;
+  if (btn) btn.textContent = selectedPlanPaymentMethod === 'transfer' ? `Transferir por ${plan.name}` : `Continuar con ${plan.name}`;
 }
 
-async function comprarCreditosDesdePanel() { try { const { url, token } = await apiPost('/payments/credits/init', { packId: selectedCreditPack }); postRedirect(url, { token_ws: token }); } catch (e) { toast(e.error || 'No se pudo iniciar el pago'); } }
-function renderPremiumCard() { const box = document.getElementById('premium-status'); const badge = document.getElementById('account-plan-badge'); if (!box) return; const p = currentUser.premium; if (p?.active) { badge.textContent = p.tier === 'pro' ? '🏆 Premium Pro' : '★ Premium'; badge.className = `plan-badge ${p.tier === 'pro' ? 'plan-pro' : 'plan-premium'}`; box.innerHTML = `<div class="premium-active-box"><strong>Plan activo</strong><p>Prioridad de ${precios.priorityHours || 24} horas. Próxima renovación: ${p.planEnd ? fmtDate(p.planEnd) : '—'}.</p></div>`; } else { badge.textContent = 'Plan gratuito'; badge.className = 'plan-badge plan-standard'; box.innerHTML = '<div class="premium-smallprint">Las oportunidades nuevas permanecen reservadas durante 24 horas. Si nadie las toma, se habilitan gratis para abogados verificados.</div>'; } }
-async function contratarPremium(tier = selectedPlan) { const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
+let selectedCreditPaymentMethod = 'webpay';
+let selectedPlanPaymentMethod = 'oneclick';
+let activeTransferPaymentId = null;
+
+function setCreditPaymentMethod(method) {
+  selectedCreditPaymentMethod = method;
+  document.querySelectorAll('[data-credit-method]').forEach(b => b.classList.toggle('active', b.dataset.creditMethod === method));
+  const btn = document.getElementById('credit-pay-btn');
+  if (btn) btn.textContent = method === 'transfer' ? 'Generar datos para transferencia' : 'Pagar con tarjeta · Webpay';
+  document.getElementById('credit-transfer-box')?.classList.toggle('hidden', method !== 'transfer');
+}
+function setPlanPaymentMethod(method) {
+  selectedPlanPaymentMethod = method;
+  document.querySelectorAll('[data-plan-method]').forEach(b => b.classList.toggle('active', b.dataset.planMethod === method));
+  const btn = document.getElementById('plan-continue-btn');
+  const plan = precios.plans?.[selectedPlan];
+  if (btn && plan) btn.textContent = method === 'transfer' ? `Transferir por ${plan.name}` : `Continuar con ${plan.name}`;
+  document.getElementById('plan-transfer-box')?.classList.toggle('hidden', method !== 'transfer');
+}
+
+async function comprarCreditosDesdePanel() {
+  if (selectedCreditPaymentMethod === 'transfer') return iniciarTransferencia('credit_pack', selectedCreditPack, 'credit-transfer-box');
+  try { const { url, token } = await apiPost('/payments/credits/init', { packId: selectedCreditPack, country: 'CL' }); postRedirect(url, { token_ws: token }); }
+  catch (e) { toast(e.error || 'No se pudo iniciar el pago'); }
+}
+
+async function iniciarTransferencia(kind, productId, targetId) {
+  try {
+    const data = await apiPost('/payments/transfer/init', { kind, productId, country: 'CL' });
+    activeTransferPaymentId = data.paymentId;
+    const box = document.getElementById(targetId);
+    if (!box) return;
+    const b = data.bank || {};
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="transfer-instructions"><strong>Transferencia bancaria · Chile</strong><p>Transfiere exactamente <b>${fmtMoney(data.amount)}</b> e incluye la referencia <span class="mono">${esc(data.reference)}</span>.</p><div class="transfer-bank-grid"><span>Banco<b>${esc(b.bankName)}</b></span><span>Tipo de cuenta<b>${esc(b.accountType)}</b></span><span>N.º cuenta<b>${esc(b.accountNumber)}</b></span><span>Titular<b>${esc(b.holder)}</b></span><span>RUT<b>${esc(b.rut)}</b></span><span>Correo<b>${esc(b.email)}</b></span></div>${data.note?`<p class="payment-note">${esc(data.note)}</p>`:''}<label class="transfer-proof-label">Subir comprobante<input id="transfer-proof-file" type="file" accept="application/pdf,image/jpeg,image/png"></label><button class="btn btn-forest btn-sm" onclick="subirComprobanteTransferencia('${data.paymentId}')">Enviar comprobante a revisión</button></div>`;
+    box.scrollIntoView({behavior:'smooth',block:'center'});
+  } catch(e) { toast(e.error || 'No se pudo iniciar la transferencia'); }
+}
+
+async function subirComprobanteTransferencia(paymentId) {
+  const file = document.getElementById('transfer-proof-file')?.files?.[0];
+  if (!file) return toast('Selecciona un comprobante PDF, JPG o PNG');
+  const fd = new FormData(); fd.append('proof', file);
+  try {
+    const res = await fetch(`${API_BASE}/payments/transfer/${paymentId}/comprobante`, { method:'POST', credentials:'include', body:fd });
+    const data = await res.json().catch(()=>({}));
+    if (!res.ok) throw data;
+    toast('Comprobante enviado. El equipo revisará la transferencia.');
+    document.querySelectorAll('#credit-transfer-box,#plan-transfer-box').forEach(box=>{ if(!box.classList.contains('hidden')) box.innerHTML='<div class="transfer-pending"><strong>Comprobante enviado</strong><p>La transferencia quedó en revisión. Los créditos o el plan se activarán cuando administración confirme el abono.</p></div>'; });
+  } catch(e) { toast(e.error || 'No se pudo subir el comprobante'); }
+}
+function renderPremiumCard() { const box = document.getElementById('premium-status'); const badge = document.getElementById('account-plan-badge'); if (!box) return; const p = currentUser.premium; const active = Boolean(p?.active && p?.planEnd && new Date(p.planEnd).getTime() > Date.now()); if (active) { badge.textContent = p.tier === 'pro' ? '🏆 Premium Pro' : '★ Premium'; badge.className = `plan-badge ${p.tier === 'pro' ? 'plan-pro' : 'plan-premium'}`; const renewal = p.autoRenew === false ? `Finaliza: ${fmtDate(p.planEnd)} · sin renovación automática.` : `Próxima renovación: ${fmtDate(p.planEnd)}.`; box.innerHTML = `<div class="premium-active-box"><strong>Plan activo</strong><p>Prioridad de ${precios.priorityHours || 24} horas. ${renewal}</p>${p.autoRenew === false ? '' : '<button class="btn btn-outline btn-sm btn-dark-outline" onclick="cancelarRenovacion()">Cancelar renovación automática</button>'}</div>`; } else { badge.textContent = 'Plan gratuito'; badge.className = 'plan-badge plan-standard'; box.innerHTML = '<div class="premium-smallprint">Las oportunidades nuevas permanecen reservadas durante 24 horas. Si nadie las toma, se habilitan gratis para abogados verificados.</div>'; } }
+async function cancelarRenovacion() { if (!confirm('¿Deseas desactivar la renovación automática? Mantendrás Premium hasta la fecha de término.')) return; try { const data = await apiPost('/payments/oneclick/plan/cancelar-renovacion', {}); currentUser = await getCurrentUser(); toast(data.message || 'Renovación automática desactivada'); renderPremiumCard(); } catch (e) { toast(e.error || 'No se pudo cancelar la renovación'); } }
+async function contratarPremium(tier = selectedPlan) { const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier, country: 'CL' }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier, country: 'CL' }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
 function irAPagos(tipo = 'creditos') {
   if (!currentUser) return openLoginModal();
   if (currentUser.role !== 'abogado') return toast('Disponible para abogados');
@@ -455,8 +609,17 @@ async function cargarCuenta() {
     document.getElementById('acc-university').value = p.university || '';
     document.getElementById('acc-registry').value = p.registryNumber || '';
     document.getElementById('acc-phone').value = p.phone || '';
+    document.getElementById('acc-title-year').value = p.titleYear || '';
+    document.getElementById('acc-title-number').value = p.titleNumber || '';
     document.getElementById('acc-modes').value = (p.serviceModes || []).join(', ');
     document.getElementById('acc-url').value = p.professionalUrl || '';
+    const status = currentUser.verificationStatus || 'not_submitted';
+    const statusText = status === 'verified' ? '✓ Perfil verificado' : status === 'pending' ? '⏳ Verificación en revisión' : status === 'rejected' ? '⚠ Requiere cambios' : 'Verificación pendiente';
+    const copy = status === 'verified' ? 'Tu identidad profesional fue aprobada.' : status === 'pending' ? 'Tu documentación fue enviada y está siendo revisada.' : status === 'rejected' ? (currentUser.verificationNotes || 'Revisa tus antecedentes y vuelve a subir el documento.') : 'Completa tus antecedentes y sube el certificado profesional.';
+    document.getElementById('acc-verification-status').textContent = statusText;
+    document.getElementById('acc-verification-copy').textContent = copy;
+    const link = document.getElementById('acc-title-document-link');
+    if (link) { link.href = `${API_BASE}/account/lawyer-title/view`; link.classList.toggle('hidden', !(currentUser.titleDocument?.originalName || currentUser.tituloDocUrl)); }
   }
   const s = currentUser.settings || {};
   document.getElementById('set-email').checked = s.emailNotifications !== false;
@@ -464,12 +627,22 @@ async function cargarCuenta() {
   document.getElementById('set-proposals').checked = s.proposalNotifications !== false;
 }
 
+async function subirTituloDesdeCuenta() {
+  try {
+    const data = await uploadLawyerDocument('acc-title-document');
+    currentUser = data.user;
+    toast('Documento enviado. La verificación quedó nuevamente en revisión.');
+    await cargarCuenta();
+  } catch (e) { toast(e.error || 'No se pudo subir el documento'); }
+}
+
 async function guardarPerfil() {
-  const lawyerProfile = currentUser.role === 'abogado' ? { headline: document.getElementById('acc-headline').value, bio: document.getElementById('acc-bio').value, region: document.getElementById('acc-region').value, comuna: document.getElementById('acc-comuna').value, specialties: document.getElementById('acc-specialties').value.split(',').map(x => x.trim()).filter(Boolean), yearsExperience: Number(document.getElementById('acc-years').value), university: document.getElementById('acc-university').value, registryNumber: document.getElementById('acc-registry').value, phone: document.getElementById('acc-phone').value, serviceModes: document.getElementById('acc-modes').value.split(',').map(x => x.trim()).filter(Boolean), professionalUrl: document.getElementById('acc-url').value } : undefined;
+  const lawyerProfile = currentUser.role === 'abogado' ? { headline: document.getElementById('acc-headline').value, bio: document.getElementById('acc-bio').value, region: document.getElementById('acc-region').value, comuna: document.getElementById('acc-comuna').value, specialties: document.getElementById('acc-specialties').value.split(',').map(x => x.trim()).filter(Boolean), yearsExperience: Number(document.getElementById('acc-years').value), university: document.getElementById('acc-university').value, registryNumber: document.getElementById('acc-registry').value, titleYear: Number(document.getElementById('acc-title-year').value) || undefined, titleNumber: document.getElementById('acc-title-number').value, phone: document.getElementById('acc-phone').value, serviceModes: document.getElementById('acc-modes').value.split(',').map(x => x.trim()).filter(Boolean), professionalUrl: document.getElementById('acc-url').value } : undefined;
   try { const data = await apiPatch('/account/profile', { firstName: document.getElementById('acc-first').value, lastName: document.getElementById('acc-last').value, lawyerProfile }); currentUser = data.user; actualizarNavSesion(); toast('Perfil guardado'); } catch (e) { toast(e.error || 'No se pudo guardar'); }
 }
 async function guardarPreferencias() { try { const data = await apiPatch('/account/settings', { emailNotifications: document.getElementById('set-email').checked, opportunityNotifications: document.getElementById('set-opportunities').checked, proposalNotifications: document.getElementById('set-proposals').checked }); currentUser = data.user; toast('Preferencias guardadas'); } catch (e) { toast(e.error || 'No se pudo guardar'); } }
 async function cambiarPassword() { try { await apiPatch('/account/password', { currentPassword: document.getElementById('acc-pass-current').value, newPassword: document.getElementById('acc-pass-new').value }); document.getElementById('acc-pass-current').value = ''; document.getElementById('acc-pass-new').value = ''; toast('Contraseña actualizada'); } catch (e) { toast(e.error || 'No se pudo cambiar'); } }
+async function cerrarTodasLasSesiones() { if (!confirm('¿Cerrar la sesión en todos tus dispositivos? Tendrás que volver a iniciar sesión.')) return; try { await apiPost('/account/security/logout-all', {}); currentUser = null; actualizarNavSesion(); toast('Todas las sesiones fueron cerradas'); setTimeout(() => switchView('landing'), 350); } catch (e) { toast(e.error || 'No se pudieron cerrar las sesiones'); } }
 
 async function cargarNotificaciones() {
   if (!currentUser) return;
@@ -487,6 +660,7 @@ async function marcarTodasLeidas() { try { await apiPatch('/notifications/read-a
 
 window.addEventListener('click', e => { const panel = document.getElementById('notifications-panel'); if (!panel?.classList.contains('hidden') && !panel.contains(e.target) && !e.target.closest('.nav-icon-btn')) panel.classList.add('hidden'); });
 
+setRegisterRole('cliente');
 document.getElementById('login-email-open')?.addEventListener('click', showLocalLogin);
 document.getElementById('local-login-btn')?.addEventListener('click', loginLocal);
 document.getElementById('local-register-btn')?.addEventListener('click', registerLocal);

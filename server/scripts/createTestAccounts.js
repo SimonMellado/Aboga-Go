@@ -1,5 +1,6 @@
 /* Creado por LimónStudioss. s.melladoo */
 require('dotenv').config();
+if (process.env.NODE_ENV === 'production') { console.error('Este script de prueba está bloqueado en producción.'); process.exit(1); }
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');

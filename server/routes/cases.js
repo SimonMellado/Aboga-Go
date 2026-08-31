@@ -6,6 +6,7 @@ const User = require('../models/User');
 const Proposal = require('../models/Proposal');
 const Notification = require('../models/Notification');
 const { nextCaseNumber } = require('../models/Counter');
+const { sendTransactional } = require('../config/mailer');
 
 const H = 3600000;
 const PREMIUM_PRIORITY_HOURS = Math.max(0, Number(process.env.PREMIUM_PRIORITY_HOURS || 24));
@@ -25,7 +26,7 @@ function caseState(c, user) {
   const ageHours = hoursSince(c.createdAt);
   const taken = Boolean(c.selectedLawyer) || c.status === 'en_proceso';
   const priority = !taken && PREMIUM_PRIORITY_HOURS > 0 && ageHours < PREMIUM_PRIORITY_HOURS;
-  const premium = Boolean(user?.premium?.active);
+  const premium = Boolean(user?.premium?.active && user?.premium?.planEnd && new Date(user.premium.planEnd).getTime() > Date.now());
   return {
     taken,
     priority,
@@ -168,6 +169,8 @@ router.post('/:id/tomar', requireAuth, requireRole('abogado'), async (req, res) 
       linkView: 'cliente',
       caseId: updated._id
     }).catch(() => {});
+    const clientUser = await User.findById(updated.client).select('email settings').lean().catch(() => null);
+    if (clientUser?.email && clientUser.settings?.emailNotifications !== false) sendTransactional({ to: clientUser.email, subject: 'Tu consulta fue tomada', text: `La consulta N° ${updated.numero} fue tomada por un abogado verificado. Ingresa a tu portal para revisar su estado.` }).catch(() => {});
 
     const freshUser = await User.findById(abogado._id);
     res.json({

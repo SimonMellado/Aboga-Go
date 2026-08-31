@@ -8,9 +8,10 @@ const User = require('../models/User');
 const EmailCode = require('../models/EmailCode');
 const { sendLoginCode, sendResetCode } = require('../config/mailer');
 const { requireAuth } = require('../middleware/auth');
+const { recordSecurityEvent, grantSignupBonus } = require('../utils/security');
 
 function issueToken(user) {
-  return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user._id, role: user.role, ver: Number(user.security?.tokenVersion || 0) }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
 
 function setAuthCookie(res, user) {
@@ -70,6 +71,11 @@ function hashCode(email, code) {
 function publicUser(user) {
   const obj = user.toObject ? user.toObject() : { ...user };
   delete obj.passwordHash;
+  delete obj.providerId;
+  if (obj.titleDocument) delete obj.titleDocument.storagePath;
+  delete obj.rutNormalized;
+  obj.security = { lastLoginAt: obj.security?.lastLoginAt, passwordChangedAt: obj.security?.passwordChangedAt };
+  obj.oneclick = { inscribed: Boolean(obj.oneclick?.inscribed) };
   return obj;
 }
 
@@ -115,6 +121,7 @@ router.post('/apple/callback', (req, res, next) => {
 
 router.post('/local/register/request-code', async (req, res) => {
   try {
+    if (String(req.body.website || '').trim()) return res.status(400).json({ error: 'No se pudo procesar el registro' });
     const firstName = cleanName(req.body.firstName);
     const lastName = cleanName(req.body.lastName);
     const email = normalizeEmail(req.body.email);
@@ -245,11 +252,25 @@ router.post('/local/login', async (req, res) => {
 
     const user = await User.findOne({ email }).select('+passwordHash');
     if (!user || !user.passwordHash) {
+      await recordSecurityEvent({ req, email, type: 'login_failed', outcome: 'failed', metadata: { reason: 'invalid_credentials' } });
       return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+    }
+
+    if (user.security?.lockUntil && user.security.lockUntil.getTime() > Date.now()) {
+      await recordSecurityEvent({ req, user, email, type: 'login_blocked', outcome: 'blocked', metadata: { reason: 'temporary_lock' } });
+      return res.status(429).json({ error: 'Cuenta temporalmente bloqueada por seguridad. Intenta nuevamente más tarde.' });
     }
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
+      const attempts = Number(user.security?.failedLoginAttempts || 0) + 1;
+      user.security.failedLoginAttempts = attempts;
+      if (attempts >= 5) {
+        user.security.lockUntil = new Date(Date.now() + 15 * 60 * 1000);
+        user.security.failedLoginAttempts = 0;
+      }
+      await user.save();
+      await recordSecurityEvent({ req, user, email, type: attempts >= 5 ? 'account_locked' : 'login_failed', outcome: attempts >= 5 ? 'blocked' : 'failed', metadata: { attempts } });
       return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
     }
 
@@ -257,6 +278,13 @@ router.post('/local/login', async (req, res) => {
       return res.status(403).json({ error: 'Debes verificar tu correo antes de iniciar sesión' });
     }
 
+    user.security.failedLoginAttempts = 0;
+    user.security.lockUntil = undefined;
+    user.security.lastLoginAt = new Date();
+    user.security.lastLoginIpHash = req.securitySignals?.ipHash || '';
+    user.security.lastLoginDeviceHash = req.securitySignals?.deviceHash || '';
+    await user.save();
+    await recordSecurityEvent({ req, user, email, type: 'login_success', outcome: 'success' });
     setAuthCookie(res, user);
     res.json({ user: publicUser(user), needsRole: user.role === 'sin_definir' });
   } catch (err) {
@@ -266,7 +294,7 @@ router.post('/local/login', async (req, res) => {
 });
 
 router.get('/me', requireAuth, (req, res) => {
-  res.json({ user: req.user });
+  res.json({ user: publicUser(req.user) });
 });
 
 router.post('/logout', (req, res) => {
@@ -282,12 +310,14 @@ router.post('/elegir-rol', requireAuth, async (req, res) => {
 
   const user = await User.findById(req.user._id);
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (user.role !== 'sin_definir') return res.status(409).json({ error: 'El tipo de cuenta ya fue definido' });
 
   if (role === 'cliente') {
     user.role = 'cliente';
     await user.save();
+    const bonus = await grantSignupBonus({ req, user });
     setAuthCookie(res, user);
-    return res.json({ user: publicUser(user) });
+    return res.json({ user: publicUser(user), bonusGranted: bonus.granted, bonusCredits: bonus.credits, bonusReason: bonus.reason });
   }
 
   const rut = cleanText(req.body.rut, 20);
@@ -312,6 +342,7 @@ router.post('/elegir-rol', requireAuth, async (req, res) => {
 
   user.role = 'abogado';
   user.rut = rut;
+  user.rutNormalized = normalizeRut(rut);
   if (req.body.tituloDocUrl) user.tituloDocUrl = cleanText(req.body.tituloDocUrl, 500);
   user.verified = false;
   user.verificationStatus = 'pending';
@@ -327,10 +358,15 @@ router.post('/elegir-rol', requireAuth, async (req, res) => {
   user.lawyerProfile.specialties = specialties;
   user.lawyerProfile.serviceModes = serviceModes;
   user['oneclick.username'] = String(user._id);
-  await user.save();
-
+  try {
+    await user.save();
+  } catch (err) {
+    if (err?.code === 11000 && err?.keyPattern?.rutNormalized) return res.status(409).json({ error: 'Este RUT profesional ya está asociado a otra cuenta' });
+    throw err;
+  }
+  const bonus = await grantSignupBonus({ req, user });
   setAuthCookie(res, user);
-  res.json({ user: publicUser(user) });
+  res.json({ user: publicUser(user), bonusGranted: bonus.granted, bonusCredits: bonus.credits, bonusReason: bonus.reason });
 });
 
 
@@ -370,9 +406,14 @@ router.post('/local/password/reset', async (req, res) => {
     const user = await User.findOne({ email }).select('+passwordHash');
     if (!user) return res.status(404).json({ error: 'Cuenta no encontrada' });
     user.passwordHash = await bcrypt.hash(newPassword, 12);
+    user.security.tokenVersion = Number(user.security?.tokenVersion || 0) + 1;
+    user.security.passwordChangedAt = new Date();
+    user.security.failedLoginAttempts = 0;
+    user.security.lockUntil = undefined;
     if (!user.authProviders.some(p => p.provider === 'local' && p.providerId === email)) user.authProviders.push({ provider: 'local', providerId: email });
     user.emailVerified = true;
     await user.save();
+    await recordSecurityEvent({ req, user, email, type: 'password_reset', outcome: 'success' });
     record.used = true;
     await record.save();
     res.json({ ok: true });

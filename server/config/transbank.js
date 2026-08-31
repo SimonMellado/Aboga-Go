@@ -1,7 +1,7 @@
 /* Creado por LimónStudioss. s.melladoo */
 const { WebpayPlus, Oneclick, Options, IntegrationApiKeys, IntegrationCommerceCodes, Environment } = require('transbank-sdk');
 
-const PREMIUM_PRIORITY_HOURS = 24;
+const PREMIUM_PRIORITY_HOURS = Number(process.env.PREMIUM_PRIORITY_HOURS || 24);
 
 const CREDIT_PACKS = {
   credit_1: { id: 'credit_1', name: '1 crédito', credits: 1, price: 1990 },
@@ -18,33 +18,24 @@ const PLANS = {
 
 const PLAN_CREDITS = PLANS.premium.credits;
 const PLAN_PRICE = PLANS.premium.price;
+const isProduction = process.env.NODE_ENV === 'production';
 
-function webpayPlusTx() {
-  const options = new Options(
-    IntegrationCommerceCodes.WEBPAY_PLUS,
-    IntegrationApiKeys.WEBPAY,
-    Environment.Integration
-  );
-  return new WebpayPlus.Transaction(options);
+function webpayOptions() {
+  if (!isProduction) return new Options(IntegrationCommerceCodes.WEBPAY_PLUS, IntegrationApiKeys.WEBPAY, Environment.Integration);
+  if (!process.env.TBK_WEBPAY_COMMERCE_CODE || !process.env.TBK_WEBPAY_API_KEY) throw new Error('Faltan credenciales de producción TBK_WEBPAY_COMMERCE_CODE/TBK_WEBPAY_API_KEY');
+  return new Options(process.env.TBK_WEBPAY_COMMERCE_CODE, process.env.TBK_WEBPAY_API_KEY, Environment.Production);
 }
 
-function oneclickInscriptionTx() {
-  const options = new Options(
-    IntegrationCommerceCodes.ONECLICK_MALL,
-    IntegrationApiKeys.WEBPAY,
-    Environment.Integration
-  );
-  return new Oneclick.MallInscription(options);
+function oneclickOptions() {
+  if (!isProduction) return new Options(IntegrationCommerceCodes.ONECLICK_MALL, IntegrationApiKeys.WEBPAY, Environment.Integration);
+  if (!process.env.TBK_ONECLICK_COMMERCE_CODE || !process.env.TBK_ONECLICK_API_KEY) throw new Error('Faltan credenciales de producción TBK_ONECLICK_COMMERCE_CODE/TBK_ONECLICK_API_KEY');
+  return new Options(process.env.TBK_ONECLICK_COMMERCE_CODE, process.env.TBK_ONECLICK_API_KEY, Environment.Production);
 }
 
-function oneclickChargeTx() {
-  const options = new Options(
-    IntegrationCommerceCodes.ONECLICK_MALL,
-    IntegrationApiKeys.WEBPAY,
-    Environment.Integration
-  );
-  return new Oneclick.MallTransaction(options);
-}
+function webpayPlusTx() { return new WebpayPlus.Transaction(webpayOptions()); }
+function oneclickInscriptionTx() { return new Oneclick.MallInscription(oneclickOptions()); }
+function oneclickChargeTx() { return new Oneclick.MallTransaction(oneclickOptions()); }
+function oneclickCommerceCode() { return isProduction ? process.env.TBK_ONECLICK_COMMERCE_CODE : IntegrationCommerceCodes.ONECLICK_MALL; }
 
 module.exports = {
   CREDIT_PRICE,
@@ -56,4 +47,5 @@ module.exports = {
   webpayPlusTx,
   oneclickInscriptionTx,
   oneclickChargeTx,
+  oneclickCommerceCode,
 };

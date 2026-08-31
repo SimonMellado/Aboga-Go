@@ -9,12 +9,15 @@ const creditTransactionSchema = new mongoose.Schema({
   clpAmount: { type: Number, default: 0 },
   plan: { type: String, enum: ['premium', 'pro'], default: undefined },
 
-  buyOrder: String,
-  webpayToken: String,
+  buyOrder: { type: String, index: true },
+  webpayToken: { type: String, index: true },
 
-  status: { type: String, enum: ['pending', 'approved', 'failed'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'processing', 'approved', 'failed'], default: 'pending' },
 
   createdAt: { type: Date, default: Date.now },
 });
+
+creditTransactionSchema.index({ buyOrder: 1 }, { unique: true, sparse: true });
+creditTransactionSchema.index({ webpayToken: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('CreditTransaction', creditTransactionSchema);
