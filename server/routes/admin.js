@@ -39,6 +39,61 @@ router.get('/usuarios', requireStaff('creador', 'admin'), async (req, res) => {
   res.json(users);
 });
 
+router.get('/usuarios/:id/portal', requireStaff('creador', 'admin'), async (req, res) => {
+  const target = await User.findById(req.params.id).select('name firstName lastName email role staffRole verified verificationStatus credits premium lawyerProfile createdAt settings');
+  if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (!['cliente', 'abogado'].includes(target.role)) return res.status(400).json({ error: 'Este usuario no tiene un portal de cliente o abogado' });
+
+  const baseUser = {
+    _id: target._id,
+    name: target.name,
+    firstName: target.firstName,
+    lastName: target.lastName,
+    email: target.email,
+    role: target.role,
+    staffRole: target.staffRole,
+    verified: target.verified,
+    verificationStatus: target.verificationStatus,
+    credits: target.credits,
+    premium: target.premium,
+    lawyerProfile: target.lawyerProfile,
+    createdAt: target.createdAt
+  };
+
+  if (target.role === 'cliente') {
+    const cases = await Case.find({ client: target._id })
+      .populate('selectedLawyer', 'name firstName lastName email verified lawyerProfile')
+      .sort({ createdAt: -1 })
+      .lean();
+    await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_preview', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: 'cliente' } });
+    return res.json({ mode: 'readonly', portal: 'cliente', user: baseUser, cases });
+  }
+
+  const now = Date.now();
+  const priorityHours = Math.max(0, Number(process.env.PREMIUM_PRIORITY_HOURS || 24));
+  const premiumActive = Boolean(target.premium?.active && target.premium?.planEnd && new Date(target.premium.planEnd).getTime() > now);
+  const [availableRaw, history] = await Promise.all([
+    Case.find({ status: { $in: ['abierta', 'en_proceso'] } }).sort({ createdAt: -1 }).lean(),
+    Case.find({ selectedLawyer: target._id }).sort({ acquiredAt: -1, createdAt: -1 }).lean()
+  ]);
+  const available = availableRaw.map(c => {
+    const ageHours = (now - new Date(c.createdAt).getTime()) / 3600000;
+    const taken = Boolean(c.selectedLawyer) || c.status === 'en_proceso';
+    const priority = !taken && priorityHours > 0 && ageHours < priorityHours;
+    const owned = String(c.selectedLawyer || '') === String(target._id);
+    return {
+      _id: c._id, numero: c.numero, tipo: c.tipo, comuna: c.comuna, atencion: c.atencion, intencion: c.intencion, urgencia: c.urgencia, descripcion: c.descripcion, status: c.status, createdAt: c.createdAt, acquiredAt: c.acquiredAt, acquisitionMode: c.acquisitionMode,
+      taken, priority, freeAvailable: !taken && !priority, canTake: !taken && (!priority || premiumActive), requiresCredit: !taken && priority, hoursRemaining: priority ? Math.max(0, Math.ceil(priorityHours - ageHours)) : 0,
+      owned, contactUnlocked: owned, contactName: owned ? c.contactName : '', contactWhatsapp: owned ? c.contactWhatsapp : '', contactEmail: owned ? c.contactEmail : ''
+    };
+  });
+  const premiumAcquired = history.filter(c => c.acquisitionMode === 'premium_credit').length;
+  const freeAcquired = history.filter(c => c.acquisitionMode === 'free_after_priority').length;
+  const stats = { acquired: history.length, premiumAcquired, freeAcquired, creditsSpent: premiumAcquired, profileViews: target.lawyerProfile?.profileViews || 0 };
+  await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_preview', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: 'abogado' } });
+  res.json({ mode: 'readonly', portal: 'abogado', user: baseUser, available, history, stats, priorityHours });
+});
+
 router.get('/verificacion-pendiente', requireStaff('creador', 'admin', 'moderador'), async (req, res) => {
   const pendientes = await User.find({ role: 'abogado', verified: false }).select('name firstName lastName email role rut tituloDocUrl titleDocument.originalName titleDocument.mimeType verificationStatus verificationSubmittedAt verificationNotes lawyerProfile').sort({ verificationSubmittedAt: 1, createdAt: 1 });
   res.json(pendientes);

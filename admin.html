@@ -60,6 +60,13 @@
   </div>
 </section>
 
+<div id="portal-preview-modal" class="modal-backdrop hidden" onclick="if(event.target===this) cerrarVistaPortal()">
+  <div class="card modal-card-xl admin-portal-preview-card">
+    <button class="admin-preview-close" type="button" onclick="cerrarVistaPortal()" aria-label="Cerrar">×</button>
+    <div id="portal-preview-content"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <footer>© 2026 <strong>ABOGA GO</strong> — Panel interno. Solo para uso del equipo.</footer>
