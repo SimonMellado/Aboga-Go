@@ -48,7 +48,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: `${process.env.BACKEND_URL || 'http://localhost:4000'}/api/auth/google/callback`,
+    callbackURL: `${String(process.env.BACKEND_URL || 'https://api.abogago.online').trim().replace(/\/$/, '')}/api/auth/google/callback`,
   }, async (accessToken, refreshToken, profile, done) => {
     try {
       const user = await findOrLinkOAuthUser({
@@ -79,7 +79,7 @@ if (
     teamID: process.env.APPLE_TEAM_ID,
     keyID: process.env.APPLE_KEY_ID,
     privateKeyLocation: process.env.APPLE_PRIVATE_KEY_PATH,
-    callbackURL: `${process.env.BACKEND_URL || 'http://localhost:4000'}/api/auth/apple/callback`,
+    callbackURL: `${String(process.env.BACKEND_URL || 'https://api.abogago.online').trim().replace(/\/$/, '')}/api/auth/apple/callback`,
     scope: ['name', 'email'],
     passReqToCallback: false,
   }, async (accessToken, refreshToken, idToken, profile, done) => {

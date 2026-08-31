@@ -18,15 +18,19 @@ function setAuthCookie(res, user) {
   const token = issueToken(user);
   res.cookie('token', token, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     secure: process.env.NODE_ENV === 'production',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }
 
+function frontendBase() {
+  return String(process.env.FRONTEND_URL || 'https://abogago.online').trim().replace(/\/$/, '');
+}
+
 function loginAndRedirect(req, res, user, redirectPath) {
   setAuthCookie(res, user);
-  res.redirect(`${process.env.FRONTEND_URL}${redirectPath}`);
+  res.redirect(`${frontendBase()}${redirectPath}`);
 }
 
 function normalizeEmail(email) {
@@ -88,11 +92,11 @@ router.get('/google', (req, res, next) => {
 
 router.get('/google/callback', (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-    return res.redirect(`${process.env.FRONTEND_URL}/index.html?login=error`);
+    return res.redirect(`${frontendBase()}/index.html?login=error`);
   }
   return passport.authenticate('google', {
     session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}/index.html?login=error`,
+    failureRedirect: `${frontendBase()}/index.html?login=error`,
   })(req, res, () => {
     const path = req.user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
     loginAndRedirect(req, res, req.user, path);
@@ -108,11 +112,11 @@ router.get('/apple', (req, res, next) => {
 
 router.post('/apple/callback', (req, res, next) => {
   if (!process.env.APPLE_CLIENT_ID || !process.env.APPLE_TEAM_ID || !process.env.APPLE_KEY_ID || !process.env.APPLE_PRIVATE_KEY_PATH) {
-    return res.redirect(`${process.env.FRONTEND_URL}/index.html?login=error`);
+    return res.redirect(`${frontendBase()}/index.html?login=error`);
   }
   return passport.authenticate('apple', {
     session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}/index.html?login=error`,
+    failureRedirect: `${frontendBase()}/index.html?login=error`,
   })(req, res, () => {
     const path = req.user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
     loginAndRedirect(req, res, req.user, path);

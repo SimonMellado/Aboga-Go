@@ -1,16 +1,27 @@
 /* Creado por LimónStudioss. s.melladoo */
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? `${window.location.protocol}//${window.location.hostname}:4000/api`
-  : '/api';
+const API_BASE = (() => {
+  const runtime = String(window.ABOGAGO_API_BASE || '').trim().replace(/\/$/, '');
+  if (runtime) return runtime.endsWith('/api') ? runtime : `${runtime}/api`;
+  const productionApi = 'https://api.abogago.online/api';
+  return productionApi;
+})();
+
+async function apiFetch(path, options = {}) {
+  try {
+    return await fetch(API_BASE + path, { credentials:'include', ...options });
+  } catch (error) {
+    throw { error: 'No se pudo conectar con ABOGA GO. Revisa que el backend de Render esté activo y que Netlify tenga configurada la URL de la API.' };
+  }
+}
 
 async function apiGet(path){
-  const res = await fetch(API_BASE + path, { credentials:'include' });
+  const res = await apiFetch(path);
   if(!res.ok) throw await res.json().catch(()=>({error:'Error de red'}));
   return res.json();
 }
 async function apiPost(path, body){
-  const res = await fetch(API_BASE + path, {
-    method:'POST', credentials:'include',
+  const res = await apiFetch(path, {
+    method:'POST',
     headers:{'Content-Type':'application/json'},
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -37,8 +48,8 @@ async function getCurrentUser(){
 }
 
 async function apiPatch(path, body){
-  const res = await fetch(API_BASE + path, {
-    method:'PATCH', credentials:'include',
+  const res = await apiFetch(path, {
+    method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body: body ? JSON.stringify(body) : undefined,
   });

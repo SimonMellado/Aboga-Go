@@ -10,10 +10,11 @@ const connectDB = require('./config/db');
 const passport = require('./config/passport');
 const { iniciarCronRenovacion } = require('./jobs/renewPremium');
 const { ensureDeviceCookie } = require('./utils/security');
+const { ensureCreatorAccount } = require('./utils/ensureCreator');
 
 function requireProductionEnv() {
   if (process.env.NODE_ENV !== 'production') return;
-  const required = ['FRONTEND_URL','BACKEND_URL','MONGODB_URI','JWT_SECRET','SECURITY_PEPPER','SMTP_HOST','SMTP_USER','SMTP_PASS','MAIL_FROM','TBK_WEBPAY_COMMERCE_CODE','TBK_WEBPAY_API_KEY','TBK_ONECLICK_COMMERCE_CODE','TBK_ONECLICK_API_KEY'];
+  const required = ['FRONTEND_URL','BACKEND_URL','MONGODB_URI','JWT_SECRET','SECURITY_PEPPER','SMTP_HOST','SMTP_USER','SMTP_PASS','MAIL_FROM','TBK_WEBPAY_COMMERCE_CODE','TBK_WEBPAY_API_KEY','TBK_ONECLICK_COMMERCE_CODE','TBK_ONECLICK_API_KEY','CREATOR_EMAIL','CREATOR_PASSWORD'];
   const missing = required.filter(k => !String(process.env[k] || '').trim());
   if (missing.length) throw new Error(`Faltan variables obligatorias de producción: ${missing.join(', ')}`);
   if (String(process.env.JWT_SECRET).length < 48) throw new Error('JWT_SECRET debe tener al menos 48 caracteres en producción');
@@ -25,7 +26,14 @@ function requireProductionEnv() {
 requireProductionEnv();
 const app = express();
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', Math.max(1, Number(process.env.TRUST_PROXY_HOPS || 1)));
-const allowedOrigins = new Set([process.env.FRONTEND_URL, ...(process.env.NODE_ENV === 'production' ? [] : ['http://127.0.0.1:8080','http://localhost:8080'])].filter(Boolean));
+const extraOrigins = String(process.env.ALLOWED_ORIGINS || '').split(',').map(v => v.trim().replace(/\/$/, '')).filter(Boolean);
+const configuredFrontend = String(process.env.FRONTEND_URL || 'https://abogago.online').trim().replace(/\/$/, '');
+const allowedOrigins = new Set([
+  configuredFrontend,
+  'https://abogago.online',
+  'https://www.abogago.online',
+  ...extraOrigins,
+].filter(Boolean));
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
 app.use(compression());
@@ -78,7 +86,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.0', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '6.10.6', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);
@@ -87,7 +95,8 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-connectDB().then(() => {
+connectDB().then(async () => {
+  await ensureCreatorAccount();
   const server = app.listen(PORT, () => {
     console.log(`ABOGA GO API lista en puerto ${PORT}`);
     iniciarCronRenovacion();
