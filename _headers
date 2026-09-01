@@ -7,7 +7,18 @@
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-site
   X-Permitted-Cross-Domain-Policies: none
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self' https://api.abogago.online; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://api.abogago.online
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://www.google.com https://www.google.cl https://www.googleadservices.com https://googleads.g.doubleclick.net; connect-src 'self' https://api.abogago.online https://www.googletagmanager.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googleadservices.com https://googleads.g.doubleclick.net; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://api.abogago.online
 
 /admin.html
   Cache-Control: no-store
+
+/admin.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/sitemap.xml
+  Content-Type: application/xml; charset=UTF-8
+  Cache-Control: public, max-age=3600
+
+/robots.txt
+  Content-Type: text/plain; charset=UTF-8
+  Cache-Control: public, max-age=3600

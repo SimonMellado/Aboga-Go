@@ -53,7 +53,7 @@ async function deliver(message) {
         headers: {
           'Authorization': `Bearer ${cfg.apiKey}`,
           'Content-Type': 'application/json',
-          'User-Agent': 'ABOGA-GO/7.0.3',
+          'User-Agent': 'ABOGA-GO/7.0.6',
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(15000),

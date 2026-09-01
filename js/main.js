@@ -114,6 +114,7 @@ function switchView(view) {
   document.getElementById(`view-${view}`)?.classList.remove('hidden');
   document.querySelectorAll('.nav-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  window.abogaTrackPageView?.(view, `ABOGA GO · ${view.charAt(0).toUpperCase() + view.slice(1)}`);
   if (view === 'cliente') { cargarPortalCliente(); setTimeout(applyPendingPublicCase, 50); }
   if (view === 'abogado') cargarPortalAbogado();
   if (view === 'cuenta') cargarCuenta();
@@ -241,6 +242,8 @@ async function verifyRegisterCode() {
     closeLoginModal();
     if (selectedRegisterRole === 'abogado') toast(bonusGranted ? 'Cuenta creada con 10 créditos. Tus antecedentes quedaron en revisión.' : 'Cuenta creada. Tus antecedentes quedaron en revisión.');
     else toast(bonusGranted ? 'Cuenta creada con 10 créditos de bienvenida' : 'Cuenta creada correctamente');
+    window.abogaTrackEvent?.('sign_up', { method: 'email', account_type: selectedRegisterRole });
+    window.abogaTrackConversion?.('registration');
     afterLogin();
   } catch (e) { toast(e.error || 'No se pudo completar el registro'); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Verificar y continuar'; } }
@@ -324,6 +327,22 @@ async function initSesion() {
   if (params.get('flow') === 'exitoso') toast('Pago Flow confirmado. Tu compra ya fue acreditada.');
   if (params.get('flow') === 'pendiente') toast('Pago Flow pendiente de confirmación. Se acreditará automáticamente cuando Flow lo confirme.');
   if (params.get('flow') === 'fallido') toast('El pago con Flow no fue aprobado.');
+  const paymentSucceeded = params.get('pago') === 'exitoso' || params.get('plan') === 'exitoso' || params.get('flow') === 'exitoso';
+  if (paymentSucceeded) {
+    const paymentKey = `${params.get('pago') || ''}-${params.get('plan') || ''}-${params.get('flow') || ''}-${location.pathname}`;
+    window.abogaTrackOnce?.(paymentKey, () => {
+      let checkout = {};
+      try { checkout = JSON.parse(sessionStorage.getItem('abogago_last_checkout') || '{}'); } catch (_) {}
+      const value = Number(checkout.value || 0);
+      const purchaseParams = { currency: 'CLP', payment_status: 'confirmed', payment_method: checkout.payment_method || (params.get('flow') === 'exitoso' ? 'flow' : 'online') };
+      if (value > 0) purchaseParams.value = value;
+      if (checkout.kind) purchaseParams.product_kind = checkout.kind;
+      if (checkout.productId) purchaseParams.product_id = checkout.productId;
+      window.abogaTrackEvent?.('purchase', purchaseParams);
+      window.abogaTrackConversion?.('payment_success', value > 0 ? { currency: 'CLP', value } : { currency: 'CLP' });
+      try { sessionStorage.removeItem('abogago_last_checkout'); } catch (_) {}
+    });
+  }
   const requestedView = params.get('view');
   if (requestedView && ['landing','casos','cliente','abogado','cuenta'].includes(requestedView)) setTimeout(() => switchView(requestedView), 0);
   const section = params.get('section');
@@ -375,6 +394,8 @@ async function publicarCausa() {
     ['c-comuna', 'c-nombre', 'c-whatsapp', 'c-email', 'c-descripcion'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('c-consent').checked = false;
     toast(`Causa N° ${causa.numero} publicada gratis`);
+    window.abogaTrackEvent?.('generate_lead', { lead_type: 'legal_case', case_type: payload.tipo, urgency: payload.urgencia || 'sin_definir' });
+    window.abogaTrackConversion?.('case_published');
     cargarPortalCliente();
   } catch (e) { toast(e.error || 'No se pudo publicar'); }
 }
@@ -596,6 +617,10 @@ async function iniciarFlow(kind, productId) {
   try {
     const data = await apiPost('/payments/flow/create', { kind, productId, country: 'CL' });
     if (!data?.url) throw { error: 'Flow no entregó una URL de pago' };
+    const catalogItem = kind === 'plan' ? precios.plans?.[productId] : precios.creditPacks?.[productId];
+    const checkoutValue = Number(catalogItem?.price || data.amount || 0);
+    try { sessionStorage.setItem('abogago_last_checkout', JSON.stringify({ kind, productId, value: checkoutValue, payment_method: 'flow' })); } catch (_) {}
+    window.abogaTrackEvent?.('begin_checkout', { currency: 'CLP', value: checkoutValue, payment_method: 'flow', product_kind: kind, product_id: productId });
     window.location.href = data.url;
   } catch (e) {
     toast(e.error || 'No se pudo iniciar el pago con Flow');
@@ -605,6 +630,8 @@ async function iniciarFlow(kind, productId) {
 async function iniciarTransferencia(kind, productId, targetId) {
   try {
     const data = await apiPost('/payments/transfer/init', { kind, productId, country: 'CL' });
+    const catalogItem = kind === 'plan' ? precios.plans?.[productId] : precios.creditPacks?.[productId];
+    window.abogaTrackEvent?.('begin_checkout', { currency: 'CLP', value: Number(catalogItem?.price || data.amount || 0), payment_method: 'transfer', product_kind: kind, product_id: productId });
     activeTransferPaymentId = data.paymentId;
     const box = document.getElementById(targetId);
     if (!box) return;
