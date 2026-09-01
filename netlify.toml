@@ -1,38 +1,33 @@
-PORT=4000
-NODE_ENV=production
-TRUST_PROXY_HOPS=1
-FRONTEND_URL=https://abogago.online
-BACKEND_URL=https://api.abogago.online
-ALLOWED_ORIGINS=https://www.abogago.online
-MONGODB_URI=
-JWT_SECRET=
-SECURITY_PEPPER=
-CREATOR_EMAIL=
-CREATOR_PASSWORD=
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-APPLE_CLIENT_ID=
-APPLE_TEAM_ID=
-APPLE_KEY_ID=
-APPLE_PRIVATE_KEY_PATH=
-EMAIL_PROVIDER=resend
-RESEND_API_KEY=
-MAIL_FROM_EMAIL=no-reply@abogago.online
-MAIL_FROM_NAME=ABOGA GO
-MAIL_REPLY_TO=
-MAIL_VERIFY_ON_START=false
-FLOW_ENABLED=true
-FLOW_ENV=production
-FLOW_API_KEY=
-FLOW_SECRET_KEY=
-TRANSBANK_ENABLED=false
-TBK_WEBPAY_COMMERCE_CODE=
-TBK_WEBPAY_API_KEY=
-TBK_ONECLICK_COMMERCE_CODE=
-TBK_ONECLICK_API_KEY=
-TRANSFER_AUTOMATION_ENABLED=false
-TRANSFER_WEBHOOK_SECRET=
-PREMIUM_PRIORITY_HOURS=24
-APP_TIMEZONE=America/Santiago
-SIGNUP_BONUS_CREDITS=10
-SIGNUP_BONUS_MAX_PER_IP_30D=3
+[build]
+  publish = "web"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(self)"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Resource-Policy = "same-site"
+    X-Permitted-Cross-Domain-Policies = "none"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://www.google.com https://www.google.cl https://www.googleadservices.com https://googleads.g.doubleclick.net; connect-src 'self' https://api.abogago.online https://www.googletagmanager.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googleadservices.com https://googleads.g.doubleclick.net; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://api.abogago.online"
+
+[[headers]]
+  for = "/admin.html"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+
+[[headers]]
+  for = "/sitemap.xml"
+  [headers.values]
+    Content-Type = "application/xml; charset=UTF-8"
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/robots.txt"
+  [headers.values]
+    Content-Type = "text/plain; charset=UTF-8"
+    Cache-Control = "public, max-age=3600"

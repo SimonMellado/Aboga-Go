@@ -1,9 +1,6 @@
 .env
-*.env
+.env.*
 !.env.example
-server/.env
-server/node_modules/
-server/private_uploads/
-server/uploads/
-*.log
+node_modules/
 .DS_Store
+*.log
