@@ -67,9 +67,9 @@ function transferBankData() {
   const data = {
     bankName: 'Banco Falabella',
     accountType: 'Cuenta Corriente',
-    accountNumber: '19844105645',
-    holder: 'Camila MOLINA',
-    rut: '19.698.680-4',
+    accountNumber: '994685295',
+    holder: 'Deuda Reset SpA',
+    rut: '78.502.442-7',
     email: 'molinacifuentescamila@gmail.com'
   };
   return { ...data, configured: true };
