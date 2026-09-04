@@ -13,6 +13,7 @@ const SecurityEvent = require('../models/SecurityEvent');
 const SignupBonusClaim = require('../models/SignupBonusClaim');
 const { recordSecurityEvent } = require('../utils/security');
 const { matchesCatalogProduct } = require('../config/transbank');
+const { decryptDeep } = require('../utils/encryption');
 
 router.use(requireAuth);
 
@@ -67,8 +68,9 @@ router.get('/usuarios/:id/portal', requireStaff('creador', 'admin'), async (req,
       .populate('selectedLawyer', 'name firstName lastName email verified lawyerProfile')
       .sort({ createdAt: -1 })
       .lean();
+    const safeCases = decryptDeep(cases);
     await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_preview', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: 'cliente' } });
-    return res.json({ mode: 'readonly', portal: 'cliente', user: baseUser, cases });
+    return res.json({ mode: 'readonly', portal: 'cliente', user: baseUser, cases: safeCases });
   }
 
   const now = Date.now();
@@ -78,7 +80,9 @@ router.get('/usuarios/:id/portal', requireStaff('creador', 'admin'), async (req,
     Case.find({ status: { $in: ['abierta', 'en_proceso'] } }).sort({ createdAt: -1 }).lean(),
     Case.find({ selectedLawyer: target._id }).sort({ acquiredAt: -1, createdAt: -1 }).lean()
   ]);
-  const available = availableRaw.map(c => {
+  const availableSafe = decryptDeep(availableRaw);
+  const historySafe = decryptDeep(history);
+  const available = availableSafe.map(c => {
     const ageHours = (now - new Date(c.createdAt).getTime()) / 3600000;
     const taken = Boolean(c.selectedLawyer) || c.status === 'en_proceso';
     const priority = !taken && priorityHours > 0 && ageHours < priorityHours;
@@ -89,11 +93,11 @@ router.get('/usuarios/:id/portal', requireStaff('creador', 'admin'), async (req,
       owned, contactUnlocked: owned, contactName: owned ? c.contactName : '', contactWhatsapp: owned ? c.contactWhatsapp : '', contactEmail: owned ? c.contactEmail : ''
     };
   });
-  const premiumAcquired = history.filter(c => c.acquisitionMode === 'premium_credit').length;
-  const freeAcquired = history.filter(c => c.acquisitionMode === 'free_after_priority').length;
-  const stats = { acquired: history.length, premiumAcquired, freeAcquired, creditsSpent: premiumAcquired, profileViews: target.lawyerProfile?.profileViews || 0 };
+  const premiumAcquired = historySafe.filter(c => c.acquisitionMode === 'premium_credit').length;
+  const freeAcquired = historySafe.filter(c => c.acquisitionMode === 'free_after_priority').length;
+  const stats = { acquired: historySafe.length, premiumAcquired, freeAcquired, creditsSpent: premiumAcquired, profileViews: target.lawyerProfile?.profileViews || 0 };
   await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_preview', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: 'abogado' } });
-  res.json({ mode: 'readonly', portal: 'abogado', user: baseUser, available, history, stats, priorityHours });
+  res.json({ mode: 'readonly', portal: 'abogado', user: baseUser, available, history: historySafe, stats, priorityHours });
 });
 
 router.get('/verificacion-pendiente', requireStaff('creador', 'admin', 'moderador'), async (req, res) => {
@@ -145,7 +149,7 @@ router.get('/abogados/:id/documento', requireStaff('creador', 'admin', 'moderado
 });
 
 router.get('/causas', requireStaff('creador', 'admin'), async (req, res) => {
-  const causas = await Case.find().sort({ createdAt: -1 }).lean();
+  const causas = decryptDeep(await Case.find().sort({ createdAt: -1 }).lean());
   res.json(causas.map(c => ({ ...c, taken: Boolean(c.selectedLawyer) || c.status === 'en_proceso' })));
 });
 
@@ -255,7 +259,7 @@ router.get('/compras', requireStaff('creador', 'admin'), async (req, res) => {
     };
   });
 
-  const rows = [...cardRows, ...transferRows].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const rows = decryptDeep([...cardRows, ...transferRows].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
   res.json({
     generatedAt: new Date(),
     totals: {
@@ -273,22 +277,23 @@ router.get('/compras/:source/:id/json', requireStaff('creador', 'admin'), async 
   if (source === 'card') {
     const payment = await CreditTransaction.findById(req.params.id).populate('user', 'name firstName lastName email rut rutNormalized credits premium createdAt').lean();
     if (!payment) return res.status(404).json({ error: 'Compra no encontrada' });
-    const verification = payment.providerVerification || {};
+    const safePayment = decryptDeep(payment);
+    const verification = safePayment.providerVerification || {};
     return res.json({
       compra: {
-        id: payment._id,
-        metodo: payment.provider === 'oneclick' ? 'Oneclick' : payment.provider === 'flow' ? 'Flow' : 'Webpay',
-        proveedor: payment.provider || 'transbank',
-        estado: payment.status,
-        montoCLP: payment.clpAmount,
-        creditos: payment.credits,
-        tipo: payment.kind,
-        plan: payment.plan || null,
-        fechaCreacion: payment.createdAt
+        id: safePayment._id,
+        metodo: safePayment.provider === 'oneclick' ? 'Oneclick' : safePayment.provider === 'flow' ? 'Flow' : 'Webpay',
+        proveedor: safePayment.provider || 'transbank',
+        estado: safePayment.status,
+        montoCLP: safePayment.clpAmount,
+        creditos: safePayment.credits,
+        tipo: safePayment.kind,
+        plan: safePayment.plan || null,
+        fechaCreacion: safePayment.createdAt
       },
-      abogado: payment.user || null,
+      abogado: safePayment.user || null,
       verificacionPago: {
-        pagoConfirmadoPorProveedor: Boolean(payment.status === 'approved' && verification.verified),
+        pagoConfirmadoPorProveedor: Boolean(safePayment.status === 'approved' && verification.verified),
         estadoProveedor: verification.providerStatus || null,
         codigoRespuesta: verification.responseCode ?? null,
         codigoAutorizacion: verification.authorizationCode || null,
@@ -298,45 +303,46 @@ router.get('/compras/:source/:id/json', requireStaff('creador', 'admin'), async 
         montoInformadoPorProveedor: verification.amount ?? null,
         fechaTransaccion: verification.transactionDate || null,
         fechaVerificacion: verification.verifiedAt || null,
-        ordenCompra: payment.buyOrder || null,
-        ordenFlow: payment.flowOrder || null,
-        tokenFlowRegistrado: Boolean(payment.flowToken),
+        ordenCompra: safePayment.buyOrder || null,
+        ordenFlow: safePayment.flowOrder || null,
+        tokenFlowRegistrado: Boolean(safePayment.flowToken),
         pagadorFlow: verification.payerEmail || null,
         medioPagoFlow: verification.paymentMedia || null,
         moneda: verification.currency || 'CLP',
-        nota: payment.status === 'approved' && !verification.verified ? 'Compra histórica aprobada antes de guardar evidencia detallada del proveedor.' : null
+        nota: safePayment.status === 'approved' && !verification.verified ? 'Compra histórica aprobada antes de guardar evidencia detallada del proveedor.' : null
       }
     });
   }
   if (source === 'transfer') {
     const payment = await ManualPayment.findById(req.params.id).populate('user', 'name firstName lastName email rut rutNormalized credits premium createdAt').populate('reviewedBy', 'name email staffRole').lean();
     if (!payment) return res.status(404).json({ error: 'Transferencia no encontrada' });
-    const autoVerified = payment.status === 'approved' && payment.verificationSource === 'provider_webhook' && Boolean(payment.settlementId);
+    const safePayment = decryptDeep(payment);
+    const autoVerified = safePayment.status === 'approved' && safePayment.verificationSource === 'provider_webhook' && Boolean(safePayment.settlementId);
     return res.json({
       compra: {
-        id: payment._id,
+        id: safePayment._id,
         metodo: 'Transferencia bancaria',
-        estado: payment.status,
-        montoCLP: payment.amount,
-        creditos: payment.credits,
-        tipo: payment.kind,
-        producto: payment.productId,
-        referencia: payment.reference,
-        fechaCreacion: payment.createdAt
+        estado: safePayment.status,
+        montoCLP: safePayment.amount,
+        creditos: safePayment.credits,
+        tipo: safePayment.kind,
+        producto: safePayment.productId,
+        referencia: safePayment.reference,
+        fechaCreacion: safePayment.createdAt
       },
-      abogado: payment.user || null,
+      abogado: safePayment.user || null,
       verificacionPago: {
         pagoConfirmadoAutomaticamente: autoVerified,
-        origenValidacion: payment.verificationSource || 'pendiente',
-        idLiquidacionBancoProveedor: payment.settlementId || null,
-        rutTitularEsperado: payment.payerRutDisplay || null,
-        comprobanteCargado: Boolean(payment.proof?.path),
-        nombreComprobante: payment.proof?.originalName || null,
-        aprobadoAutomaticamenteEn: payment.autoApprovedAt || null,
-        revisadoEn: payment.reviewedAt || null,
-        revisadoPor: payment.reviewedBy || null,
-        notaRevision: payment.reviewNote || null,
-        advertencia: payment.verificationSource === 'manual' ? 'La aprobación manual indica que un administrador declaró haber verificado el abono. Confirma el movimiento en la cuenta bancaria si necesitas una segunda comprobación.' : null
+        origenValidacion: safePayment.verificationSource || 'pendiente',
+        idLiquidacionBancoProveedor: safePayment.settlementId || null,
+        rutTitularEsperado: safePayment.payerRutDisplay || null,
+        comprobanteCargado: Boolean(safePayment.proof?.path),
+        nombreComprobante: safePayment.proof?.originalName || null,
+        aprobadoAutomaticamenteEn: safePayment.autoApprovedAt || null,
+        revisadoEn: safePayment.reviewedAt || null,
+        revisadoPor: safePayment.reviewedBy || null,
+        notaRevision: safePayment.reviewNote || null,
+        advertencia: safePayment.verificationSource === 'manual' ? 'La aprobación manual indica que un administrador declaró haber verificado el abono. Confirma el movimiento en la cuenta bancaria si necesitas una segunda comprobación.' : null
       }
     });
   }
@@ -345,7 +351,7 @@ router.get('/compras/:source/:id/json', requireStaff('creador', 'admin'), async 
 
 router.get('/transferencias', requireStaff('creador', 'admin'), async (req, res) => {
   const rows = await ManualPayment.find().populate('user', 'name firstName lastName email rut').sort({ createdAt: -1 }).lean();
-  res.json(rows);
+  res.json(decryptDeep(rows));
 });
 
 router.get('/transferencias/:id/comprobante', requireStaff('creador', 'admin'), async (req, res) => {

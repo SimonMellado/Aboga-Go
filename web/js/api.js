@@ -10,7 +10,7 @@ async function apiFetch(path, options = {}) {
   try {
     return await fetch(API_BASE + path, { credentials:'include', ...options });
   } catch (error) {
-    throw { error: 'No se pudo conectar con ABOGA GO. Revisa que el backend de Render esté activo y que Netlify tenga configurada la URL de la API.' };
+    throw { error: 'No se pudo conectar con ABOGA GO. Revisa que el backend de Render esté activo y que Cloudflare esté usando la URL correcta de la API.' };
   }
 }
 

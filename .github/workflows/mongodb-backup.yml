@@ -1,0 +1,39 @@
+name: Backup MongoDB cifrado
+on:
+  schedule:
+    - cron: '17 5 */2 * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Instalar MongoDB Database Tools
+        run: |
+          wget -qO- https://pgp.mongodb.com/server-8.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+          echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-database-tools
+      - name: Instalar dependencias
+        working-directory: server
+        run: npm ci
+      - name: Crear backup cifrado
+        working-directory: server
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          SECURITY_PEPPER: ${{ secrets.SECURITY_PEPPER }}
+        run: node scripts/backup-mongodb.js
+      - name: Guardar backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: abogago-mongodb-backup-${{ github.run_id }}
+          path: server/backups/*.aesgcm
+          retention-days: 30
+          if-no-files-found: error

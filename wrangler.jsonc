@@ -1,0 +1,15 @@
+{
+  "name": "aboga-go",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-31",
+  "assets": {
+    "directory": "./web",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page"
+  },
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": {
+    "enabled": true
+  }
+}

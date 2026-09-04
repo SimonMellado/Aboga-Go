@@ -1,11 +1,13 @@
 {
   "name": "aboga-go-api",
-  "version": "7.0.8",
+  "version": "7.1.1",
   "private": true,
-  "description": "Backend ABOGA GO V7.0.8 — SEO técnico, páginas públicas indexables, seguridad y pagos idempotentes",
+  "description": "Backend ABOGA GO V7.1.0 — 2FA, cifrado de datos sensibles, backups y hardening Cloudflare",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "backup": "node scripts/backup-mongodb.js",
+    "migrate:encryption": "node scripts/migrate-encryption.js"
   },
   "dependencies": {
     "cookie-parser": "^1.4.6",
@@ -23,7 +25,9 @@
     "bcryptjs": "^2.4.3",
     "helmet": "^8.1.0",
     "express-rate-limit": "^7.5.0",
-    "compression": "^1.8.1"
+    "compression": "^1.8.1",
+    "otplib": "^12.0.1",
+    "qrcode": "^1.5.4"
   },
   "author": "LimónStudioss. s.melladoo"
 }

@@ -133,7 +133,7 @@ function goLandingSection(id) {
 function resetAuthModalScroll() { const card = document.querySelector('#login-modal .login-card'); if (card) card.scrollTo({ top: 0, behavior: 'instant' }); }
 function openLoginModal() { document.getElementById('login-modal')?.classList.remove('hidden'); showLoginMethods(); resetAuthModalScroll(); }
 function closeLoginModal() { document.getElementById('login-modal')?.classList.add('hidden'); }
-function showLoginMethods() { const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode','auth-email-mode'); ['local-auth-step', 'login-code-step', 'password-reset-step'].forEach(id => document.getElementById(id)?.classList.add('hidden')); document.getElementById('login-methods')?.classList.remove('hidden'); }
+function showLoginMethods() { const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode','auth-email-mode'); ['local-auth-step', 'login-code-step', 'login-2fa-step', 'password-reset-step'].forEach(id => document.getElementById(id)?.classList.add('hidden')); document.getElementById('login-methods')?.classList.remove('hidden'); }
 function showLocalLogin() { const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode'); card?.classList.add('auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('password-reset-step')?.classList.add('hidden'); document.getElementById('local-login-form')?.classList.remove('hidden'); document.getElementById('local-register-form')?.classList.add('hidden'); document.getElementById('auth-tab-login')?.classList.add('active'); document.getElementById('auth-tab-register')?.classList.remove('active'); resetAuthModalScroll(); }
 function showLocalRegister() { const card=document.querySelector('#login-modal .login-card'); card?.classList.add('auth-register-mode','auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('local-login-form')?.classList.add('hidden'); document.getElementById('local-register-form')?.classList.remove('hidden'); document.getElementById('auth-tab-login')?.classList.remove('active'); document.getElementById('auth-tab-register')?.classList.add('active'); resetAuthModalScroll(); }
 function backToRegisterStep() { document.getElementById('login-code-step')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); showLocalRegister(); }
@@ -187,10 +187,27 @@ async function uploadLawyerDocument(inputId) {
 async function loginLocal() {
   try {
     const data = await apiPost('/auth/local/login', { email: document.getElementById('login-email-local').value.trim(), password: document.getElementById('login-password-local').value, portal: selectedLoginPortal });
+    if (data.requires2FA) { showLogin2FA(); return; }
     currentUser = data.user;
     closeLoginModal();
     afterLogin();
   } catch (e) { toast(e.error || 'No se pudo iniciar sesión'); }
+}
+function showLogin2FA() {
+  document.getElementById('login-methods')?.classList.add('hidden');
+  document.getElementById('local-auth-step')?.classList.add('hidden');
+  document.getElementById('password-reset-step')?.classList.add('hidden');
+  document.getElementById('login-2fa-step')?.classList.remove('hidden');
+  setTimeout(() => document.getElementById('login-2fa-code')?.focus(), 30);
+}
+async function verifyLogin2FA() {
+  try {
+    const code = document.getElementById('login-2fa-code').value.trim();
+    const data = await apiPost('/auth/2fa/verify-login', { code });
+    currentUser = data.user;
+    closeLoginModal();
+    afterLogin();
+  } catch (e) { toast(e.error || 'No se pudo verificar 2FA'); }
 }
 
 async function registerLocal() {
@@ -320,6 +337,8 @@ async function initSesion() {
   if (params.get('admin') === '1' && isStaffUser()) { window.location.href = 'admin.html'; return; }
   if (params.get('login') === 'exitoso' && isPrivilegedStaffLawyer()) setTimeout(() => switchView('abogado'), 0);
   if (params.get('login') === 'elegir_rol' && currentUser) document.getElementById('role-modal')?.classList.remove('hidden');
+  if (params.get('login') === '2fa' && !currentUser) { openLoginModal(); showLogin2FA(); }
+  if (params.get('login') === '2fa_required') toast('Esta cuenta administrativa debe activar 2FA antes de continuar.');
   if (params.get('pago') === 'exitoso') toast('Pago aprobado. Créditos agregados.');
   if (params.get('pago') === 'procesando') toast('Pago recibido. Estamos terminando de acreditar tus créditos.');
   if (params.get('plan') === 'exitoso') toast('Plan activado correctamente.');
@@ -456,15 +475,62 @@ function renderCliente() {
 async function cerrarCausa(id) { try { await apiPatch(`/cases/${id}/cerrar`, {}); toast('Consulta cerrada'); cargarPortalCliente(); } catch (e) { toast(e.error || 'No se pudo cerrar'); } }
 async function editarCausa(id) { const c = causasCliente.find(x => x._id === id); if (!c) return; const descripcion = prompt('Editar descripción de la consulta:', c.descripcion || ''); if (descripcion === null) return; try { await apiPatch(`/cases/${id}`, { descripcion }); toast('Consulta actualizada'); cargarPortalCliente(); } catch (e) { toast(e.error || 'No se pudo editar'); } }
 
+let opportunityRefreshTimer = null;
+
 async function cargarPortalAbogado() {
   if (!currentUser || currentUser.role !== 'abogado') return;
   currentUser = await getCurrentUser();
   document.getElementById('abogado-session-badge').textContent = currentUser.verified ? '● Abogado verificado' : '● Verificación pendiente';
   document.getElementById('saldo-creditos').textContent = currentUser.credits ?? 0;
-  try { causasAbogado.disponibles = await apiGet('/cases/disponibles'); } catch (e) { causasAbogado.disponibles = []; }
-  renderDisponibles();
+  await actualizarOportunidadesAbogado(false);
   renderPremiumCard();
   cargarDashboardPro();
+  if (opportunityRefreshTimer) clearInterval(opportunityRefreshTimer);
+  opportunityRefreshTimer = setInterval(() => {
+    if (currentUser?.role === 'abogado' && !document.hidden) actualizarOportunidadesAbogado(false);
+  }, 60000);
+}
+
+async function actualizarOportunidadesAbogado(showToast = true) {
+  const title = document.getElementById('opportunity-status-title');
+  const detail = document.getElementById('opportunity-status-detail');
+  const updated = document.getElementById('opportunity-updated');
+  const button = document.getElementById('opportunity-refresh-btn');
+  if (title) title.textContent = 'Actualizando oportunidades…';
+  if (detail) detail.textContent = 'Consultando las consultas reales disponibles ahora.';
+  if (button) button.disabled = true;
+  try {
+    causasAbogado.disponibles = await apiGet('/cases/disponibles');
+    renderDisponibles();
+    const total = causasAbogado.disponibles.length;
+    const open = causasAbogado.disponibles.filter(c => !c.taken).length;
+    const canTakeNow = causasAbogado.disponibles.filter(c => !c.taken && c.canTake).length;
+    const premiumWaiting = causasAbogado.disponibles.filter(c => !c.taken && c.priority && !c.canTake).length;
+    if (total === 0) {
+      if (title) title.textContent = 'No hay consultas publicadas ahora';
+      if (detail) detail.textContent = 'La plataforma respondió correctamente: en este momento no existen oportunidades activas para revisar.';
+    } else if (canTakeNow > 0) {
+      if (title) title.textContent = `${canTakeNow} ${canTakeNow === 1 ? 'oportunidad disponible' : 'oportunidades disponibles'} para ti`;
+      if (detail) detail.textContent = `${open} ${open === 1 ? 'consulta abierta' : 'consultas abiertas'} en total. ${premiumWaiting ? `${premiumWaiting} ${premiumWaiting === 1 ? 'está' : 'están'} en espera de acceso Premium.` : 'Puedes revisar y acceder a las oportunidades habilitadas.'}`;
+    } else if (open > 0) {
+      if (title) title.textContent = `${open} ${open === 1 ? 'consulta publicada' : 'consultas publicadas'}, pero ninguna habilitada para tu cuenta`;
+      if (detail) detail.textContent = premiumWaiting ? `Las oportunidades activas están dentro de las primeras 24 h y requieren Premium. No es un congelamiento.` : 'Revisa el estado de cada oportunidad para conocer cuándo se habilita.';
+    } else {
+      if (title) title.textContent = 'No hay oportunidades abiertas para tomar';
+      if (detail) detail.textContent = 'Las consultas mostradas ya fueron tomadas por otros abogados.';
+    }
+    if (updated) updated.textContent = `Última actualización: ${new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    if (showToast) toast(total ? `Oportunidades actualizadas: ${total}` : 'No hay consultas publicadas en este momento');
+  } catch (e) {
+    causasAbogado.disponibles = [];
+    renderDisponibles();
+    if (title) title.textContent = 'No se pudo consultar las oportunidades';
+    if (detail) detail.textContent = 'Esto sí puede ser un problema de conexión. Pulsa “Actualizar” para intentarlo nuevamente.';
+    if (updated) updated.textContent = 'Última actualización: error de conexión';
+    if (showToast) toast(e.error || 'No se pudieron cargar las oportunidades');
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function setAbogadoTab(tab) {
@@ -482,7 +548,7 @@ function renderDisponibles() {
   const comuna = (document.getElementById('f-comuna')?.value || '').toLowerCase();
   const urgencia = (document.getElementById('f-urgencia')?.value || '').toLowerCase();
   const items = causasAbogado.disponibles.filter(c => (!tipo || c.tipo.toLowerCase() === tipo) && (!comuna || c.comuna.toLowerCase().includes(comuna)) && (!urgencia || c.urgencia.toLowerCase() === urgencia));
-  if (!items.length) { box.innerHTML = '<div class="empty">No hay oportunidades para mostrar en este momento.</div>'; return; }
+  if (!items.length) { box.innerHTML = '<div class="empty opportunity-empty"><strong>No hay oportunidades que coincidan con estos filtros.</strong><span>Prueba quitando algún filtro o pulsa “Actualizar” para comprobar nuevamente.</span></div>'; return; }
   box.innerHTML = items.map(c => {
     let stateClass = 'ticket-status-available';
     let badge = '<span class="pill pill-available">● DISPONIBLE</span>';
@@ -706,6 +772,13 @@ async function cargarCuenta() {
     const link = document.getElementById('acc-title-document-link');
     if (link) { link.href = `${API_BASE}/account/lawyer-title/view`; link.classList.toggle('hidden', !(currentUser.titleDocument?.originalName || currentUser.tituloDocUrl)); }
   }
+  const twoFactorEnabled = Boolean(currentUser.security?.twoFactorEnabled);
+  const tfStatus = document.getElementById('two-factor-status');
+  if (tfStatus) tfStatus.textContent = twoFactorEnabled ? '✓ 2FA está activado en tu cuenta.' : '2FA está desactivado. Recomendado para proteger tu cuenta.';
+  document.getElementById('two-factor-enable')?.classList.toggle('hidden', twoFactorEnabled);
+  document.getElementById('two-factor-disable')?.classList.toggle('hidden', !twoFactorEnabled);
+  document.getElementById('two-factor-setup')?.classList.add('hidden');
+  document.getElementById('two-factor-recovery')?.classList.add('hidden');
   const s = currentUser.settings || {};
   document.getElementById('set-email').checked = s.emailNotifications !== false;
   document.getElementById('set-opportunities').checked = s.opportunityNotifications !== false;
@@ -728,6 +801,51 @@ async function guardarPerfil() {
 async function guardarPreferencias() { try { const data = await apiPatch('/account/settings', { emailNotifications: document.getElementById('set-email').checked, opportunityNotifications: document.getElementById('set-opportunities').checked, proposalNotifications: document.getElementById('set-proposals').checked }); currentUser = data.user; toast('Preferencias guardadas'); } catch (e) { toast(e.error || 'No se pudo guardar'); } }
 async function cambiarPassword() { try { await apiPatch('/account/password', { currentPassword: document.getElementById('acc-pass-current').value, newPassword: document.getElementById('acc-pass-new').value }); document.getElementById('acc-pass-current').value = ''; document.getElementById('acc-pass-new').value = ''; toast('Contraseña actualizada'); } catch (e) { toast(e.error || 'No se pudo cambiar'); } }
 async function cerrarTodasLasSesiones() { if (!confirm('¿Cerrar la sesión en todos tus dispositivos? Tendrás que volver a iniciar sesión.')) return; try { await apiPost('/account/security/logout-all', {}); currentUser = null; actualizarNavSesion(); toast('Todas las sesiones fueron cerradas'); setTimeout(() => switchView('landing'), 350); } catch (e) { toast(e.error || 'No se pudieron cerrar las sesiones'); } }
+
+
+async function iniciar2FA() {
+  try {
+    const data = await apiPost('/account/security/2fa/setup', { currentPassword: document.getElementById('two-factor-password')?.value || '' });
+    document.getElementById('two-factor-qr').src = data.qrDataUrl;
+    document.getElementById('two-factor-secret').value = data.secret;
+    document.getElementById('two-factor-setup').classList.remove('hidden');
+    toast('Escanea el QR y confirma con un código de 6 dígitos');
+  } catch (e) { toast(e.error || 'No se pudo configurar 2FA'); }
+}
+async function activar2FA() {
+  try {
+    const code = document.getElementById('two-factor-confirm-code').value.trim();
+    const data = await apiPost('/account/security/2fa/enable', { code });
+    currentUser = data.user;
+    const box = document.getElementById('two-factor-recovery');
+    document.getElementById('two-factor-recovery-codes').textContent = (data.recoveryCodes || []).join('\n');
+    box.classList.remove('hidden');
+    document.getElementById('two-factor-enable').classList.add('hidden');
+    document.getElementById('two-factor-disable').classList.remove('hidden');
+    document.getElementById('two-factor-status').textContent = '✓ 2FA está activado en tu cuenta.';
+    toast('2FA activado. Guarda los códigos de recuperación.');
+  } catch (e) { toast(e.error || 'No se pudo activar 2FA'); }
+}
+async function desactivar2FA() {
+  if (!confirm('¿Desactivar la autenticación en dos factores?')) return;
+  try {
+    await apiPost('/account/security/2fa/disable', { code: document.getElementById('two-factor-disable-code').value.trim(), currentPassword: document.getElementById('two-factor-disable-password').value });
+    currentUser = null;
+    actualizarNavSesion();
+    toast('2FA desactivado. Inicia sesión nuevamente.');
+    setTimeout(() => switchView('landing'), 300);
+  } catch (e) { toast(e.error || 'No se pudo desactivar 2FA'); }
+}
+async function regenerarCodigos2FA() {
+  const code = document.getElementById('two-factor-disable-code').value.trim();
+  if (!code) return toast('Ingresa primero un código 2FA válido');
+  try {
+    const data = await apiPost('/account/security/2fa/recovery-codes', { code });
+    document.getElementById('two-factor-recovery-codes').textContent = (data.recoveryCodes || []).join('\n');
+    document.getElementById('two-factor-recovery').classList.remove('hidden');
+    toast('Se generaron nuevos códigos. Los anteriores ya no sirven.');
+  } catch (e) { toast(e.error || 'No se pudieron regenerar los códigos'); }
+}
 
 async function cargarNotificaciones() {
   if (!currentUser) return;

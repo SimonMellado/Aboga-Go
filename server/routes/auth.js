@@ -4,6 +4,8 @@ const passport = require('passport');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const { authenticator } = require('otplib');
+const { decryptString, recoveryCodeHash } = require('../utils/encryption');
 const User = require('../models/User');
 const EmailCode = require('../models/EmailCode');
 const { sendLoginCode, sendResetCode } = require('../config/mailer');
@@ -23,6 +25,44 @@ function setAuthCookie(res, user) {
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/',
   });
+}
+
+
+function issueTwoFactorChallenge(user, portal = '') {
+  return jwt.sign({ uid: String(user._id), purpose: '2fa-login', portal, ver: Number(user.security?.tokenVersion || 0) }, process.env.JWT_SECRET, { expiresIn: '5m', algorithm: 'HS256', issuer: 'abogago-api', audience: 'abogago-web' });
+}
+function setTwoFactorChallengeCookie(res, user, portal = '') {
+  res.cookie('ag_2fa', issueTwoFactorChallenge(user, portal), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 5 * 60 * 1000,
+    path: '/',
+  });
+}
+function clearTwoFactorChallengeCookie(res) {
+  res.clearCookie('ag_2fa', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
+}
+function staffNeeds2FA(user) {
+  return String(process.env.FORCE_STAFF_2FA || 'false').toLowerCase() === 'true' && ['creador','admin','moderador'].includes(staffRoleOf(user));
+}
+function twoFactorEnabled(user) {
+  return Boolean(user?.security?.twoFactor?.enabled && user?.security?.twoFactor?.secretEncrypted);
+}
+async function completeLogin(req, res, user, portal = '') {
+  await ensurePrivilegedLawyerAccess(user);
+  if (portal === 'abogado' && user.role !== 'abogado') return res.status(403).json({ error: 'Esta cuenta está registrada como cliente. Elige Cliente para ingresar.' });
+  if (portal === 'cliente' && user.role === 'abogado') return res.status(403).json({ error: 'Esta cuenta está registrada como abogado. Elige Abogado para ingresar.' });
+  user.security.failedLoginAttempts = 0;
+  user.security.lockUntil = undefined;
+  user.security.lastLoginAt = new Date();
+  user.security.lastLoginIpHash = req.securitySignals?.ipHash || '';
+  user.security.lastLoginDeviceHash = req.securitySignals?.deviceHash || '';
+  await user.save();
+  await recordSecurityEvent({ req, user, email: user.email, type: 'login_success', outcome: 'success', metadata: { twoFactor: twoFactorEnabled(user) } });
+  setAuthCookie(res, user);
+  clearTwoFactorChallengeCookie(res);
+  return res.json({ user: publicUser(user), needsRole: user.role === 'sin_definir' });
 }
 
 function frontendBase() {
@@ -95,7 +135,7 @@ function publicUser(user) {
   delete obj.providerId;
   if (obj.titleDocument) delete obj.titleDocument.storagePath;
   delete obj.rutNormalized;
-  obj.security = { lastLoginAt: obj.security?.lastLoginAt, passwordChangedAt: obj.security?.passwordChangedAt };
+  obj.security = { lastLoginAt: obj.security?.lastLoginAt, passwordChangedAt: obj.security?.passwordChangedAt, twoFactorEnabled: Boolean(obj.security?.twoFactor?.enabled) };
   obj.oneclick = { inscribed: Boolean(obj.oneclick?.inscribed) };
   return obj;
 }
@@ -115,6 +155,13 @@ router.get('/google/callback', (req, res, next) => {
     session: false,
     failureRedirect: `${frontendBase()}/index.html?login=error`,
   })(req, res, () => {
+    if (staffNeeds2FA(req.user) && !twoFactorEnabled(req.user)) {
+      return res.redirect(`${frontendBase()}/index.html?login=2fa_required`);
+    }
+    if (twoFactorEnabled(req.user)) {
+      setTwoFactorChallengeCookie(res, req.user, '');
+      return res.redirect(`${frontendBase()}/index.html?login=2fa`);
+    }
     const path = req.user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
     loginAndRedirect(req, res, req.user, path);
   });
@@ -135,6 +182,13 @@ router.post('/apple/callback', (req, res, next) => {
     session: false,
     failureRedirect: `${frontendBase()}/index.html?login=error`,
   })(req, res, () => {
+    if (staffNeeds2FA(req.user) && !twoFactorEnabled(req.user)) {
+      return res.redirect(`${frontendBase()}/index.html?login=2fa_required`);
+    }
+    if (twoFactorEnabled(req.user)) {
+      setTwoFactorChallengeCookie(res, req.user, '');
+      return res.redirect(`${frontendBase()}/index.html?login=2fa`);
+    }
     const path = req.user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
     loginAndRedirect(req, res, req.user, path);
   });
@@ -316,18 +370,62 @@ router.post('/local/login', async (req, res) => {
     await ensurePrivilegedLawyerAccess(user);
     if (portal === 'abogado' && user.role !== 'abogado') return res.status(403).json({ error: 'Esta cuenta está registrada como cliente. Elige Cliente para ingresar.' });
     if (portal === 'cliente' && user.role === 'abogado') return res.status(403).json({ error: 'Esta cuenta está registrada como abogado. Elige Abogado para ingresar.' });
-    user.security.failedLoginAttempts = 0;
-    user.security.lockUntil = undefined;
-    user.security.lastLoginAt = new Date();
-    user.security.lastLoginIpHash = req.securitySignals?.ipHash || '';
-    user.security.lastLoginDeviceHash = req.securitySignals?.deviceHash || '';
-    await user.save();
-    await recordSecurityEvent({ req, user, email, type: 'login_success', outcome: 'success' });
-    setAuthCookie(res, user);
-    res.json({ user: publicUser(user), needsRole: user.role === 'sin_definir' });
+    if (staffNeeds2FA(user) && !twoFactorEnabled(user)) {
+      await recordSecurityEvent({ req, user, email, type: 'login_blocked', outcome: 'blocked', metadata: { reason: 'staff_2fa_required' } });
+      return res.status(403).json({ error: 'Esta cuenta administrativa debe activar 2FA antes de iniciar sesión. Ingresa con una sesión existente o solicita asistencia al creador.' });
+    }
+    if (twoFactorEnabled(user)) {
+      setTwoFactorChallengeCookie(res, user, portal);
+      await recordSecurityEvent({ req, user, email, type: '2fa_challenge', outcome: 'info' });
+      return res.json({ requires2FA: true, message: 'Ingresa el código de tu aplicación de autenticación' });
+    }
+    return completeLogin(req, res, user, portal);
   } catch (err) {
     console.error('local login:', err);
     res.status(500).json({ error: 'No se pudo iniciar sesión' });
+  }
+});
+
+
+router.post('/2fa/verify-login', async (req, res) => {
+  try {
+    const challenge = String(req.cookies?.ag_2fa || '');
+    if (!challenge) return res.status(401).json({ error: 'El desafío 2FA expiró. Inicia sesión nuevamente.' });
+    let payload;
+    try {
+      payload = jwt.verify(challenge, process.env.JWT_SECRET, { algorithms: ['HS256'], issuer: 'abogago-api', audience: 'abogago-web' });
+    } catch (_) {
+      clearTwoFactorChallengeCookie(res);
+      return res.status(401).json({ error: 'El desafío 2FA expiró. Inicia sesión nuevamente.' });
+    }
+    if (payload.purpose !== '2fa-login' || !payload.uid) return res.status(401).json({ error: 'Desafío 2FA inválido' });
+    const user = await User.findById(payload.uid);
+    if (!user || Number(user.security?.tokenVersion || 0) !== Number(payload.ver || 0) || !twoFactorEnabled(user)) return res.status(401).json({ error: 'Desafío 2FA inválido' });
+    const raw = String(req.body.code || '').trim().replace(/\s+/g, '').toUpperCase();
+    let valid = false;
+    let usedRecovery = false;
+    if (/^\d{6}$/.test(raw)) {
+      valid = authenticator.check(raw, decryptString(user.security.twoFactor.secretEncrypted));
+    } else if (/^[A-Z0-9-]{8,24}$/.test(raw)) {
+      const hash = recoveryCodeHash(raw);
+      const idx = (user.security.twoFactor.recoveryCodeHashes || []).indexOf(hash);
+      if (idx >= 0) {
+        valid = true;
+        usedRecovery = true;
+        user.security.twoFactor.recoveryCodeHashes.splice(idx, 1);
+      }
+    }
+    if (!valid) {
+      await recordSecurityEvent({ req, user, email: user.email, type: '2fa_failed', outcome: 'failed' });
+      return res.status(401).json({ error: 'Código 2FA incorrecto' });
+    }
+    user.security.twoFactor.lastUsedAt = new Date();
+    await user.save();
+    await recordSecurityEvent({ req, user, email: user.email, type: '2fa_success', outcome: 'success', metadata: { recoveryCode: usedRecovery } });
+    return completeLogin(req, res, user, String(payload.portal || ''));
+  } catch (err) {
+    console.error('2fa verify-login:', err);
+    return res.status(500).json({ error: 'No se pudo verificar el código 2FA' });
   }
 });
 

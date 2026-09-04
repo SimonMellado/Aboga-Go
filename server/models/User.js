@@ -1,5 +1,6 @@
 /* Creado por LimónStudioss. s.melladoo */
 const mongoose = require('mongoose');
+const { encryptString, decryptString } = require('../utils/encryption');
 
 const authProviderSchema = new mongoose.Schema({
   provider: { type: String, enum: ['google', 'apple', 'email', 'local'], required: true },
@@ -19,7 +20,7 @@ const lawyerProfileSchema = new mongoose.Schema({
   titleNumber: { type: String, trim: true, maxlength: 120, default: '' },
   serviceModes: { type: [String], default: [] },
   professionalUrl: { type: String, trim: true, maxlength: 300, default: '' },
-  phone: { type: String, trim: true, maxlength: 30, default: '' },
+  phone: { type: String, trim: true, maxlength: 220, default: '', set: encryptString, get: decryptString },
   profileViews: { type: Number, default: 0 }
 }, { _id: false });
 
@@ -42,7 +43,7 @@ const userSchema = new mongoose.Schema({
   emailVerified: { type: Boolean, default: false },
   role: { type: String, enum: ['sin_definir', 'cliente', 'abogado', 'admin'], default: 'sin_definir' },
   staffRole: { type: String, enum: ['none', 'moderador', 'admin', 'creador'], default: 'none', index: true },
-  rut: String,
+  rut: { type: String, default: '', set: encryptString, get: decryptString },
   rutNormalized: { type: String, default: undefined },
   tituloDocUrl: String,
   titleDocument: {
@@ -68,7 +69,16 @@ const userSchema = new mongoose.Schema({
     lastLoginIpHash: { type: String, default: '' },
     lastLoginDeviceHash: { type: String, default: '' },
     signupBonusGrantedAt: Date,
-    passwordChangedAt: Date
+    passwordChangedAt: Date,
+    twoFactor: {
+      enabled: { type: Boolean, default: false },
+      secretEncrypted: { type: String, default: '' },
+      pendingSecretEncrypted: { type: String, default: '' },
+      pendingCreatedAt: Date,
+      recoveryCodeHashes: { type: [String], default: [] },
+      enabledAt: Date,
+      lastUsedAt: Date
+    }
   },
   premium: {
     active: { type: Boolean, default: false },
@@ -86,7 +96,7 @@ const userSchema = new mongoose.Schema({
     pendingPlan: { type: String, enum: ['premium', 'pro'], default: undefined }
   },
   createdAt: { type: Date, default: Date.now }
-});
+}, { toJSON: { getters: true }, toObject: { getters: true } });
 
 userSchema.index({ provider: 1, providerId: 1 }, { unique: true });
 userSchema.index({ rutNormalized: 1 }, { unique: true, sparse: true });

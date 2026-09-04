@@ -4,3 +4,5 @@ private_uploads/
 uploads/
 *.log
 .DS_Store
+
+backups/

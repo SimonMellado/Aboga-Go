@@ -16,12 +16,14 @@ const { flowConfig } = require('./config/flow');
 
 function requireProductionEnv() {
   if (process.env.NODE_ENV !== 'production') return;
-  const required = ['FRONTEND_URL','BACKEND_URL','MONGODB_URI','JWT_SECRET','SECURITY_PEPPER','RESEND_API_KEY','MAIL_FROM_EMAIL','MAIL_FROM_NAME','CREATOR_EMAIL','CREATOR_PASSWORD'];
+  const required = ['FRONTEND_URL','BACKEND_URL','MONGODB_URI','JWT_SECRET','SECURITY_PEPPER','RESEND_API_KEY','MAIL_FROM_EMAIL','MAIL_FROM_NAME','CREATOR_EMAIL','CREATOR_PASSWORD','DATA_ENCRYPTION_KEY'];
   const missing = required.filter(k => !String(process.env[k] || '').trim());
   if (missing.length) throw new Error(`Faltan variables obligatorias de producción: ${missing.join(', ')}`);
   if (String(process.env.JWT_SECRET).length < 48) throw new Error('JWT_SECRET debe tener al menos 48 caracteres en producción');
   if (String(process.env.SECURITY_PEPPER).length < 48) throw new Error('SECURITY_PEPPER debe tener al menos 48 caracteres en producción');
   if (process.env.SECURITY_PEPPER === process.env.JWT_SECRET) throw new Error('SECURITY_PEPPER debe ser distinto de JWT_SECRET');
+  if (String(process.env.DATA_ENCRYPTION_KEY).length < 32) throw new Error('DATA_ENCRYPTION_KEY debe tener al menos 32 caracteres o ser una clave Base64/hex de 32 bytes');
+  if ([process.env.JWT_SECRET, process.env.SECURITY_PEPPER].includes(process.env.DATA_ENCRYPTION_KEY)) throw new Error('DATA_ENCRYPTION_KEY debe ser distinta de JWT_SECRET y SECURITY_PEPPER');
   if (!String(process.env.FRONTEND_URL).startsWith('https://') || !String(process.env.BACKEND_URL).startsWith('https://')) throw new Error('FRONTEND_URL y BACKEND_URL deben usar HTTPS en producción');
   if (String(process.env.FLOW_ENABLED || 'true').toLowerCase() === 'true') {
     const flowMissing = ['FLOW_API_KEY','FLOW_SECRET_KEY'].filter(k => !String(process.env[k] || '').trim());
@@ -86,6 +88,7 @@ app.use(passport.initialize());
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiadas solicitudes. Intenta nuevamente en unos minutos.' } });
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: 'draft-7', legacyHeaders: false, skipSuccessfulRequests: true, message: { error: 'Demasiados intentos de inicio de sesión. Espera unos minutos.' } });
+const twoFactorLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 15, standardHeaders: 'draft-7', legacyHeaders: false, skipSuccessfulRequests: true, message: { error: 'Demasiados intentos 2FA. Espera unos minutos.' } });
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiados intentos de registro desde esta red. Intenta más tarde.' } });
 const sensitiveLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false, skip: req => req.path === '/transfer/webhook', message: { error: 'Demasiadas solicitudes. Intenta nuevamente más tarde.' } });
 const transferWebhookLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Demasiadas confirmaciones de transferencia.' } });
@@ -101,6 +104,7 @@ app.use(mutationOriginGuard);
 app.use(['/api/auth','/api/account','/api/admin','/api/payments'], (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 app.use('/api/auth/local/login', loginLimiter);
 app.use('/api/auth/local/register', registerLimiter);
+app.use('/api/auth/2fa/verify-login', twoFactorLimiter);
 app.use('/api/auth/local', authLimiter);
 app.use('/api/payments/transfer/webhook', transferWebhookLimiter);
 app.use('/api/payments', sensitiveLimiter);
@@ -110,7 +114,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '7.0.8', env: process.env.NODE_ENV || 'development' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '7.1.0', env: process.env.NODE_ENV || 'development' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);

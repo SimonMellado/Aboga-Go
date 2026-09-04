@@ -7,6 +7,7 @@ const Proposal = require('../models/Proposal');
 const Notification = require('../models/Notification');
 const { nextCaseNumber } = require('../models/Counter');
 const { sendTransactional } = require('../config/mailer');
+const { decryptDeep } = require('../utils/encryption');
 
 const H = 3600000;
 const PREMIUM_PRIORITY_HOURS = Math.max(0, Number(process.env.PREMIUM_PRIORITY_HOURS || 24));
@@ -100,7 +101,7 @@ router.post('/', requireAuth, requireRole('cliente'), async (req, res) => {
 });
 
 router.get('/mias', requireAuth, requireRole('cliente'), async (req, res) => {
-  const causas = await Case.find({ client: req.user._id }).sort({ createdAt: -1 }).lean();
+  const causas = decryptDeep(await Case.find({ client: req.user._id }).sort({ createdAt: -1 }).lean());
   res.json(causas.map(c => ({ ...c, taken: Boolean(c.selectedLawyer) || c.status === 'en_proceso' })));
 });
 
@@ -187,7 +188,7 @@ router.post('/:id/tomar', requireAuth, requireRole('abogado'), async (req, res) 
 });
 
 router.get('/historial', requireAuth, requireRole('abogado'), async (req, res) => {
-  const cases = await Case.find({ selectedLawyer: req.user._id }).sort({ acquiredAt: -1, createdAt: -1 }).lean();
+  const cases = decryptDeep(await Case.find({ selectedLawyer: req.user._id }).sort({ acquiredAt: -1, createdAt: -1 }).lean());
   res.json(cases.map(c => ({
     _id: c._id,
     numero: c.numero,
