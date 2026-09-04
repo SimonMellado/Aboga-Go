@@ -1,8 +1,8 @@
 {
   "name": "aboga-go-api",
-  "version": "7.1.1",
+  "version": "7.1.2",
   "private": true,
-  "description": "Backend ABOGA GO V7.1.0 — 2FA, cifrado de datos sensibles, backups y hardening Cloudflare",
+  "description": "Backend ABOGA GO V7.1.2 — 2FA, cifrado de datos sensibles, backups, hardening Cloudflare y gestión de portales administrativos",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

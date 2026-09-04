@@ -729,3 +729,5 @@ input:focus,select:focus,textarea:focus{
 .opportunity-empty{display:flex;flex-direction:column;gap:5px}
 .opportunity-empty span{font-size:12px;opacity:.7}
 @media(max-width:640px){.opportunity-status-bar{align-items:flex-start;flex-direction:column}.opportunity-refresh-btn{width:100%}.opportunity-updated{text-align:left}}
+
+.admin-users-note{margin:14px 20px 0;padding:11px 13px;border:1px solid #e7dfc7;border-radius:11px;background:#fffaf0;color:#6b5a28;font-size:12px;line-height:1.5}.admin-users-table-wrap{overflow-x:auto}.admin-assign-portal{display:flex;gap:6px;align-items:center;min-width:250px}.portal-user-btn{white-space:nowrap}.admin-assign-portal .admin-role-select{min-width:105px;padding:7px 9px}.admin-assign-portal .btn{white-space:nowrap}@media(max-width:900px){.admin-assign-portal{min-width:210px}.admin-users-note{margin-left:14px;margin-right:14px}}

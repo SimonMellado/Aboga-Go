@@ -42,6 +42,27 @@ router.get('/usuarios', requireStaff('creador', 'admin'), async (req, res) => {
   res.json(users);
 });
 
+router.post('/usuarios/:id/asignar-tipo', requireStaff('creador', 'admin'), async (req, res) => {
+  const role = String(req.body?.role || '').trim();
+  if (!['cliente', 'abogado'].includes(role)) return res.status(400).json({ error: 'Tipo de cuenta no válido' });
+  const target = await User.findById(req.params.id);
+  if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (target.staffRole === 'creador') return res.status(403).json({ error: 'La cuenta creadora no puede ser modificada desde este panel' });
+  if (target.role !== 'sin_definir') return res.status(409).json({ error: 'Esta cuenta ya tiene un portal asignado' });
+
+  target.role = role;
+  if (role === 'cliente') {
+    target.verified = false;
+    target.verificationStatus = 'not_submitted';
+  } else {
+    target.verified = false;
+    target.verificationStatus = 'not_submitted';
+  }
+  await target.save();
+  await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'account_type_assigned', outcome: 'success', metadata: { targetUserId: String(target._id), role } });
+  res.json({ ok: true, user: target });
+});
+
 router.get('/usuarios/:id/portal', requireStaff('creador', 'admin'), async (req, res) => {
   const target = await User.findById(req.params.id).select('name firstName lastName email role staffRole verified verificationStatus credits premium lawyerProfile createdAt settings');
   if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
