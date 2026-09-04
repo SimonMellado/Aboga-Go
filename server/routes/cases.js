@@ -73,6 +73,8 @@ router.post('/', requireAuth, requireRole('cliente'), async (req, res) => {
 
     if (!tipo || !comuna || !atencion || !intencion || !contactName || !contactWhatsapp || !contactEmail || !descripcion) return res.status(400).json({ error: 'Completa todos los campos obligatorios' });
     if (!validEmail(contactEmail)) return res.status(400).json({ error: 'Ingresa un correo válido' });
+    if (!['Solo virtual', 'Presencial y virtual'].includes(atencion)) return res.status(400).json({ error: 'Tipo de atención inválido' });
+    if (!['Consulta o asesoría', 'Contratar servicio'].includes(intencion)) return res.status(400).json({ error: 'Intención inválida' });
     if (!['Baja', 'Media', 'Alta'].includes(urgencia)) return res.status(400).json({ error: 'Urgencia inválida' });
     if (!contactConsent) return res.status(400).json({ error: 'Debes aceptar el uso de tus datos de contacto' });
 
@@ -93,10 +95,12 @@ router.post('/', requireAuth, requireRole('cliente'), async (req, res) => {
     }));
     if (notifications.length) await Notification.insertMany(notifications);
 
+    await require('../utils/security').recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'case_published', outcome: 'success', metadata: { caseId: String(nuevaCausa._id), caseNumber: nuevaCausa.numero, tipo, comuna } });
     res.status(201).json(nuevaCausa);
   } catch (err) {
     console.error('create case:', err);
-    res.status(500).json({ error: 'No se pudo publicar la causa' });
+    await require('../utils/security').recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'case_publish_failed', outcome: 'error', metadata: { reason: err?.name || 'unknown' } }).catch(() => {});
+    res.status(500).json({ error: 'No se pudo publicar la causa. Intenta nuevamente.' });
   }
 });
 

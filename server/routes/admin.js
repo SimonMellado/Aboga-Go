@@ -261,6 +261,21 @@ router.get('/causas', requireStaffPermission('cases_manage'), async (req, res) =
   res.json(causas.map(c => ({ ...c, taken: Boolean(c.selectedLawyer) || c.status === 'en_proceso' })));
 });
 
+router.get('/causas/resumen-publicacion', requireStaffPermission('cases_manage'), async (req, res) => {
+  const since = new Date(Date.now() - 30 * 86400000);
+  const [total, abiertas, proceso, cerradas, ultimas, clientes, publicaciones30d, fallos24h] = await Promise.all([
+    Case.countDocuments(),
+    Case.countDocuments({ status: 'abierta' }),
+    Case.countDocuments({ status: 'en_proceso' }),
+    Case.countDocuments({ status: 'cerrada' }),
+    Case.find().select('_id numero client tipo comuna status createdAt selectedLawyer acquiredAt').populate('client', 'name firstName lastName email role').sort({ createdAt: -1 }).limit(10).lean(),
+    User.countDocuments({ role: 'cliente', active: { $ne: false } }),
+    Case.countDocuments({ createdAt: { $gte: since } }),
+    require('../models/SecurityEvent').countDocuments({ type: 'case_publish_failed', createdAt: { $gte: new Date(Date.now() - 86400000) } })
+  ]);
+  res.json({ total, abiertas, proceso, cerradas, clientes, publicaciones30d, fallos24h, ultimas: ultimas.map(c => ({ _id: c._id, numero: c.numero, tipo: c.tipo, comuna: c.comuna, status: c.status, createdAt: c.createdAt, client: c.client ? { name: c.client.name, firstName: c.client.firstName, lastName: c.client.lastName, email: c.client.email } : null, taken: Boolean(c.selectedLawyer) || c.status === 'en_proceso', acquiredAt: c.acquiredAt })) });
+});
+
 router.post('/creditos/:userId', requireStaffPermission('credits_manage'), async (req, res) => {
   const delta = Number(req.body?.delta);
   if (!Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > 1000) return res.status(400).json({ error: 'El ajuste debe ser un entero entre -1000 y 1000 y distinto de cero' });
