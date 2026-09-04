@@ -74,6 +74,25 @@ function loginAndRedirect(req, res, user, redirectPath) {
   res.redirect(`${frontendBase()}${redirectPath}`);
 }
 
+function setOAuthPortalCookie(res, portal) {
+  res.cookie('ag_oauth_portal', portal === 'abogado' || portal === 'cliente' ? portal : '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 10 * 60 * 1000,
+    path: '/',
+  });
+}
+
+function getOAuthPortal(req) {
+  const portal = String(req.cookies?.ag_oauth_portal || '').trim();
+  return portal === 'abogado' || portal === 'cliente' ? portal : '';
+}
+
+function clearOAuthPortalCookie(res) {
+  res.clearCookie('ag_oauth_portal', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
+}
+
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
@@ -142,8 +161,10 @@ function publicUser(user) {
 
 router.get('/google', (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-    return res.status(503).send('Google Login aún no está configurado.');
+    return res.redirect(`${frontendBase()}/index.html?login=error`);
   }
+  const portal = ['abogado', 'cliente'].includes(req.query.portal) ? req.query.portal : '';
+  setOAuthPortalCookie(res, portal);
   return passport.authenticate('google', { scope: ['profile', 'email'], session: false })(req, res, next);
 });
 
@@ -151,19 +172,36 @@ router.get('/google/callback', (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return res.redirect(`${frontendBase()}/index.html?login=error`);
   }
+  const portal = getOAuthPortal(req);
+  clearOAuthPortalCookie(res);
   return passport.authenticate('google', {
     session: false,
     failureRedirect: `${frontendBase()}/index.html?login=error`,
-  })(req, res, () => {
-    if (staffNeeds2FA(req.user) && !twoFactorEnabled(req.user)) {
+  })(req, res, (err, user) => {
+    if (err || !user) {
+      console.error('google oauth callback:', err?.message || 'Usuario no disponible');
+      return res.redirect(`${frontendBase()}/index.html?login=error`);
+    }
+    req.user = user;
+    if (portal === 'abogado' && user.role === 'cliente') {
+      return res.redirect(`${frontendBase()}/index.html?login=rol_incorrecto&portal=abogado`);
+    }
+    if (portal === 'cliente' && user.role === 'abogado') {
+      return res.redirect(`${frontendBase()}/index.html?login=rol_incorrecto&portal=cliente`);
+    }
+    if (staffNeeds2FA(user) && !twoFactorEnabled(user)) {
       return res.redirect(`${frontendBase()}/index.html?login=2fa_required`);
     }
-    if (twoFactorEnabled(req.user)) {
-      setTwoFactorChallengeCookie(res, req.user, '');
+    if (twoFactorEnabled(user)) {
+      setTwoFactorChallengeCookie(res, user, portal);
       return res.redirect(`${frontendBase()}/index.html?login=2fa`);
     }
-    const path = req.user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
-    loginAndRedirect(req, res, req.user, path);
+    if (user.role === 'sin_definir') {
+      setAuthCookie(res, user);
+      const target = portal === 'abogado' ? 'perfil_abogado' : 'elegir_rol';
+      return res.redirect(`${frontendBase()}/index.html?login=${target}`);
+    }
+    loginAndRedirect(req, res, user, '/index.html?login=exitoso');
   });
 });
 
@@ -479,6 +517,8 @@ router.post('/elegir-rol', requireAuth, async (req, res) => {
   if (phone.length < 8) return res.status(400).json({ error: 'Ingresa un teléfono profesional válido' });
   if (!region || !comuna) return res.status(400).json({ error: 'Región y comuna son obligatorias para abogados' });
   if (!university) return res.status(400).json({ error: 'Indica la universidad o institución de egreso' });
+  const titleYear = p.titleYear ? Number(p.titleYear) : 0;
+  if (!Number.isInteger(titleYear) || titleYear < 1900 || titleYear > 2100) return res.status(400).json({ error: 'Indica un año de título válido' });
   if (!specialties.length) return res.status(400).json({ error: 'Selecciona al menos una especialidad' });
   if (!serviceModes.length) return res.status(400).json({ error: 'Selecciona al menos una modalidad de atención' });
 
@@ -496,7 +536,7 @@ router.post('/elegir-rol', requireAuth, async (req, res) => {
   user.lawyerProfile.university = university;
   user.lawyerProfile.registryNumber = cleanText(p.registryNumber, 100);
   user.lawyerProfile.titleNumber = cleanText(p.titleNumber, 120);
-  user.lawyerProfile.titleYear = p.titleYear ? Math.max(1900, Math.min(2100, Number(p.titleYear))) : undefined;
+  user.lawyerProfile.titleYear = titleYear;
   user.lawyerProfile.specialties = specialties;
   user.lawyerProfile.serviceModes = serviceModes;
   user['oneclick.username'] = String(user._id);

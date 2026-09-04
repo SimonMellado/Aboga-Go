@@ -225,7 +225,7 @@ async function registerLocal() {
     const payload = lawyerPayloadFrom('register-lawyer');
     const declaration = document.getElementById('register-lawyer-declaration')?.checked;
     const file = document.getElementById('register-lawyer-document')?.files?.[0];
-    if (!payload.rut || !payload.lawyerProfile.phone || !payload.lawyerProfile.region || !payload.lawyerProfile.comuna || !payload.lawyerProfile.university || !payload.lawyerProfile.specialties.length || !payload.lawyerProfile.serviceModes.length || !file || !declaration) return toast('Completa los antecedentes profesionales y acepta la declaración');
+    if (!payload.rut || !payload.lawyerProfile.phone || !payload.lawyerProfile.region || !payload.lawyerProfile.comuna || !payload.lawyerProfile.university || !payload.lawyerProfile.titleYear || !payload.lawyerProfile.specialties.length || !payload.lawyerProfile.serviceModes.length || !file || !declaration) return toast('Completa los antecedentes profesionales y acepta la declaración');
     pendingRegisterLawyer = payload;
   } else pendingRegisterLawyer = null;
   try {
@@ -391,7 +391,20 @@ async function initSesion() {
   if (params.get('admin') === '1' && !currentUser) setTimeout(() => openLoginModal(), 0);
   if (params.get('admin') === '1' && isStaffUser()) { window.location.href = 'admin.html'; return; }
   if (params.get('login') === 'exitoso' && isPrivilegedStaffLawyer()) setTimeout(() => switchView('abogado'), 0);
-  if (params.get('login') === 'elegir_rol' && currentUser) document.getElementById('role-modal')?.classList.remove('hidden');
+  if ((params.get('login') === 'elegir_rol' || params.get('login') === 'perfil_abogado') && currentUser) {
+    const modal = document.getElementById('role-modal');
+    modal?.classList.remove('hidden');
+    if (params.get('login') === 'perfil_abogado') {
+      try { localStorage.setItem('abogago_login_portal_intent', 'abogado'); } catch (_) {}
+      mostrarFormAbogado();
+      modal?.querySelector('.role-actions')?.classList.add('hidden');
+      modal?.querySelector('.role-card h3')?.replaceChildren(document.createTextNode('Completa tu perfil de abogado'));
+      modal?.querySelector('.modal-copy')?.replaceChildren(document.createTextNode('Para continuar como abogado necesitamos estos antecedentes profesionales para iniciar la verificación de tu cuenta.'));
+    }
+  }
+  if (params.get('login') === 'rol_incorrecto') {
+    toast(params.get('portal') === 'abogado' ? 'Esta cuenta de Google ya está registrada como cliente.' : 'Esta cuenta de Google ya está registrada como abogado.');
+  }
   if (params.get('login') === '2fa' && !currentUser) { openLoginModal(); showLogin2FA(); }
   if (params.get('login') === '2fa_required') toast('Esta cuenta administrativa debe activar 2FA antes de continuar.');
   if (adminPortalMode) {
