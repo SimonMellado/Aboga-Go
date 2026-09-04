@@ -41,6 +41,7 @@ async function ensureCreatorAccount() {
   user.passwordHash = passwordHash;
   user.emailVerified = true;
   user.staffRole = 'creador';
+  user.active = true;
   user.verified = true;
   user.verificationStatus = 'verified';
   user.security = user.security || {};

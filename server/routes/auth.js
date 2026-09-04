@@ -287,6 +287,7 @@ router.post('/local/register/verify-code', async (req, res) => {
     }
 
     let user = await User.findOne({ email }).select('+passwordHash');
+    if (user?.active === false) return res.status(403).json({ error: 'Esta cuenta fue desactivada. Contacta al equipo de ABOGA GO.' });
     const isNew = !user;
 
     if (!user) {
@@ -340,6 +341,10 @@ router.post('/local/login', async (req, res) => {
     }
 
     const user = await User.findOne({ email }).select('+passwordHash');
+    if (user?.active === false) {
+      await recordSecurityEvent({ req, user, email, type: 'login_blocked', outcome: 'blocked', metadata: { reason: 'account_disabled' } });
+      return res.status(403).json({ error: 'Esta cuenta fue desactivada. Contacta al equipo de ABOGA GO.' });
+    }
     if (!user || !user.passwordHash) {
       await recordSecurityEvent({ req, email, type: 'login_failed', outcome: 'failed', metadata: { reason: 'invalid_credentials' } });
       return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
@@ -557,9 +562,13 @@ router.post('/local/password/reset', async (req, res) => {
     if (!user.authProviders.some(p => p.provider === 'local' && p.providerId === email)) user.authProviders.push({ provider: 'local', providerId: email });
     user.emailVerified = true;
     await user.save();
+    const consumed = await EmailCode.findOneAndUpdate(
+      { _id: record._id, used: false },
+      { $set: { used: true }, $unset: { passwordHash: 1 } },
+      { new: true }
+    );
+    if (!consumed) return res.status(409).json({ error: 'El código ya fue utilizado. Solicita uno nuevo.' });
     await recordSecurityEvent({ req, user, email, type: 'password_reset', outcome: 'success' });
-    record.used = true;
-    await record.save();
     res.json({ ok: true });
   } catch (err) {
     console.error('password reset:', err);

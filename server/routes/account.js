@@ -15,6 +15,14 @@ const { recordSecurityEvent, isAllowedFileSignature } = require('../utils/securi
 
 function clean(v, max = 300) { return String(v || '').trim().replace(/\s+/g, ' ').slice(0, max); }
 function cleanArray(v, maxItems = 10, maxLen = 80) { return Array.isArray(v) ? v.map(x => clean(x, maxLen)).filter(Boolean).slice(0, maxItems) : []; }
+function cleanProfessionalUrl(v) {
+  const raw = clean(v, 300);
+  if (!raw) return '';
+  try {
+    const u = new URL(raw);
+    return ['https:', 'http:'].includes(u.protocol) ? u.toString() : '';
+  } catch (_) { return ''; }
+}
 function safeUser(user) { const o = user.toObject({ getters: true }); delete o.passwordHash; delete o.providerId; if (o.titleDocument) delete o.titleDocument.storagePath; delete o.rutNormalized; o.security = { lastLoginAt: o.security?.lastLoginAt, passwordChangedAt: o.security?.passwordChangedAt, twoFactorEnabled: Boolean(o.security?.twoFactor?.enabled), twoFactorEnabledAt: o.security?.twoFactor?.enabledAt }; o.oneclick = { inscribed: Boolean(o.oneclick?.inscribed) }; return o; }
 
 
@@ -120,7 +128,7 @@ router.patch('/profile', requireAuth, async (req, res) => {
     user.lawyerProfile.titleYear = p.titleYear ? Math.max(1900, Math.min(2100, Number(p.titleYear))) : undefined;
     user.lawyerProfile.titleNumber = clean(p.titleNumber, 120);
     user.lawyerProfile.serviceModes = cleanArray(p.serviceModes, 4, 60);
-    user.lawyerProfile.professionalUrl = clean(p.professionalUrl, 300);
+    user.lawyerProfile.professionalUrl = cleanProfessionalUrl(p.professionalUrl);
     user.lawyerProfile.phone = clean(p.phone, 30);
   }
   await user.save();
@@ -240,9 +248,13 @@ router.post('/security/2fa/disable', requireAuth, async (req, res) => {
 });
 
 router.post('/security/2fa/recovery-codes', requireAuth, async (req, res) => {
-  const user = await User.findById(req.user._id);
+  const user = await User.findById(req.user._id).select('+passwordHash');
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (!verifyTwoFactorCode(user, req.body.code)) return res.status(401).json({ error: 'Código 2FA incorrecto' });
+  if (user.passwordHash) {
+    const currentPassword = String(req.body.currentPassword || '');
+    if (!currentPassword || !(await bcrypt.compare(currentPassword, user.passwordHash))) return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+  }
   const recoveryCodes = makeRecoveryCodes(10);
   user.security.twoFactor.recoveryCodeHashes = recoveryCodes.map(recoveryCodeHash);
   await user.save();

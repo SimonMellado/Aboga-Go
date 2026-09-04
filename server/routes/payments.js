@@ -87,6 +87,17 @@ function requireChile(req, res, next) {
   if (country !== 'CL') return res.status(400).json({ error: 'Este medio de pago está habilitado solamente para Chile' });
   next();
 }
+function safePaymentUser(user) {
+  const o = user?.toObject ? user.toObject({ getters: true }) : { ...user };
+  delete o.passwordHash;
+  delete o.providerId;
+  delete o.rutNormalized;
+  if (o.titleDocument) delete o.titleDocument.storagePath;
+  if (o.security) o.security = { lastLoginAt: o.security.lastLoginAt, passwordChangedAt: o.security.passwordChangedAt, twoFactorEnabled: Boolean(o.security.twoFactor?.enabled) };
+  if (o.oneclick) o.oneclick = { inscribed: Boolean(o.oneclick.inscribed) };
+  return o;
+}
+
 function getPlan(planId) {
   return PLANS[String(planId || '').toLowerCase()] || null;
 }
@@ -613,7 +624,7 @@ router.post('/oneclick/plan/activar', requireAuth, requireRole('abogado'), requi
     user.premium = { active: true, tier: plan.id, planStart: now, planEnd: end, autoRenew: true };
     await user.save();
 
-    res.json({ ok: true, user, plan });
+    res.json({ ok: true, user: safePaymentUser(user), plan: { id: plan.id, name: plan.name, price: plan.price, credits: plan.credits } });
   } catch (err) {
     console.error('Error cobrando plan Oneclick:', err);
     res.status(500).json({ error: 'No se pudo procesar el cobro del plan' });

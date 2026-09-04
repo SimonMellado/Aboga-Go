@@ -20,6 +20,10 @@ async function findOrLinkOAuthUser({ provider, providerId, email, name, avatar }
 
   if (!user && normalizedEmail) user = await User.findOne({ email: normalizedEmail });
 
+  if (user && user.active === false) {
+    throw new Error('ACCOUNT_DISABLED');
+  }
+
   if (!user) {
     return User.create({
       name,

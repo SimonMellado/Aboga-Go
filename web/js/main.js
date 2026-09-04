@@ -131,15 +131,16 @@ function goLandingSection(id) {
 
 
 function resetAuthModalScroll() { const card = document.querySelector('#login-modal .login-card'); if (card) card.scrollTo({ top: 0, behavior: 'instant' }); }
-function openLoginModal() { document.getElementById('login-modal')?.classList.remove('hidden'); showLoginMethods(); resetAuthModalScroll(); }
+function openLoginModal(portal = '') { if (portal === 'abogado' || portal === 'cliente') { selectedLoginPortal = portal; try { localStorage.setItem('abogago_login_portal_intent', portal); } catch (_) {} } document.getElementById('login-modal')?.classList.remove('hidden'); showLoginMethods(); resetAuthModalScroll(); }
 function closeLoginModal() { document.getElementById('login-modal')?.classList.add('hidden'); }
 function showLoginMethods() { const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode','auth-email-mode'); ['local-auth-step', 'login-code-step', 'login-2fa-step', 'password-reset-step'].forEach(id => document.getElementById(id)?.classList.add('hidden')); document.getElementById('login-methods')?.classList.remove('hidden'); }
-function showLocalLogin() { const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode'); card?.classList.add('auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('password-reset-step')?.classList.add('hidden'); document.getElementById('local-login-form')?.classList.remove('hidden'); document.getElementById('local-register-form')?.classList.add('hidden'); document.getElementById('auth-tab-login')?.classList.add('active'); document.getElementById('auth-tab-register')?.classList.remove('active'); resetAuthModalScroll(); }
+function showLocalLogin() { try { const intent = localStorage.getItem('abogago_login_portal_intent'); if (intent === 'abogado' || intent === 'cliente') selectedLoginPortal = intent; } catch (_) {} const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode'); card?.classList.add('auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('password-reset-step')?.classList.add('hidden'); document.getElementById('local-login-form')?.classList.remove('hidden'); document.getElementById('local-register-form')?.classList.add('hidden'); document.getElementById('auth-tab-login')?.classList.add('active'); document.getElementById('auth-tab-register')?.classList.remove('active'); resetAuthModalScroll(); }
 function showLocalRegister() { const card=document.querySelector('#login-modal .login-card'); card?.classList.add('auth-register-mode','auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('local-login-form')?.classList.add('hidden'); document.getElementById('local-register-form')?.classList.remove('hidden'); document.getElementById('auth-tab-login')?.classList.remove('active'); document.getElementById('auth-tab-register')?.classList.add('active'); resetAuthModalScroll(); }
 function backToRegisterStep() { document.getElementById('login-code-step')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); showLocalRegister(); }
 function showPasswordReset() { document.getElementById('local-auth-step')?.classList.add('hidden'); document.getElementById('password-reset-step')?.classList.remove('hidden'); }
 function setLoginPortal(role) {
   selectedLoginPortal = role === 'abogado' ? 'abogado' : 'cliente';
+  try { localStorage.setItem('abogago_login_portal_intent', selectedLoginPortal); } catch (_) {}
   document.querySelectorAll('[data-login-role]').forEach(btn => {
     const active = btn.dataset.loginRole === selectedLoginPortal;
     btn.classList.toggle('active', active);
@@ -390,7 +391,7 @@ async function elegirRol(role) {
 }
 
 function irACliente() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión para publicar gratis'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'cliente' && !isPrivilegedStaffLawyer()) return toast('Esta sección es para clientes'); switchView('cliente'); }
-function irAAbogado() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión como abogado'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'abogado') return toast('Esta sección es para abogados'); switchView('abogado'); }
+function irAAbogado() { if (!currentUser) { openLoginModal('abogado'); return toast('Inicia sesión como abogado'); } if (currentUser.role === 'sin_definir') { try { localStorage.setItem('abogago_login_portal_intent', 'abogado'); } catch (_) {} return document.getElementById('role-modal')?.classList.remove('hidden'); } if (currentUser.role !== 'abogado') return toast('Esta cuenta está registrada como cliente. Para entrar al Portal abogado necesitas una cuenta de abogado.'); switchView('abogado'); }
 
 function bindChipGroup(selector) { document.querySelectorAll(`${selector} .radio-chip`).forEach(c => c.addEventListener('click', () => { document.querySelectorAll(`${selector} .radio-chip`).forEach(x => x.classList.remove('sel')); c.classList.add('sel'); })); }
 ['#c-atencion', '#c-intencion', '#c-urgencia'].forEach(bindChipGroup);
@@ -429,8 +430,40 @@ function setClientStaffPreview(enabled) {
   form.querySelectorAll('.radio-chip').forEach(el => { el.classList.toggle('staff-preview-disabled', enabled); });
 }
 
-async function cargarPortalCliente() {
+let clientPortalRefreshTimer = null;
+let clientPortalLastError = '';
+
+async function actualizarPortalCliente() {
+  return cargarPortalCliente();
+}
+
+function setClientPortalStatus(title, detail, state = 'loading') {
+  const bar = document.getElementById('cliente-portal-status');
+  const titleEl = document.getElementById('cliente-status-title');
+  const detailEl = document.getElementById('cliente-status-detail');
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail;
+  if (bar) {
+    bar.dataset.state = state;
+    bar.classList.toggle('status-error', state === 'error');
+    bar.classList.toggle('status-ok', state === 'ok');
+  }
+}
+
+function programarActualizacionPortalCliente() {
+  clearInterval(clientPortalRefreshTimer);
+  clientPortalRefreshTimer = setInterval(() => {
+    const view = document.getElementById('view-cliente');
+    if (view && !view.classList.contains('hidden') && currentUser && currentUser.role === 'cliente') cargarPortalCliente({ silent: true });
+  }, 60000);
+}
+
+async function cargarPortalCliente(options = {}) {
+  const silent = options.silent === true;
   if (!currentUser) return;
+  currentUser = await getCurrentUser();
+  if (!currentUser) return;
+  programarActualizacionPortalCliente();
   if (isPrivilegedStaffLawyer()) {
     setClientStaffPreview(true);
     document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>Vista ${staffRoleOf() === 'creador' ? 'creador' : 'admin'}`;
@@ -445,12 +478,29 @@ async function cargarPortalCliente() {
   if (currentUser.role !== 'cliente') return;
   setClientStaffPreview(false);
   document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>${esc(currentUser.name || currentUser.email)}`;
+  if (!silent) {
+    setClientPortalStatus('Cargando tus consultas…', 'Estamos consultando tus publicaciones en el servidor.', 'loading');
+    const box = document.getElementById('cliente-causas');
+    if (box && !causasCliente.length) box.innerHTML = '<div class="card empty">Cargando tus consultas…</div>';
+  }
   const nameInput = document.getElementById('c-nombre'); const emailInput = document.getElementById('c-email');
   if (nameInput && !nameInput.value) nameInput.value = currentUser.name || `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim();
   if (emailInput && !emailInput.value) emailInput.value = currentUser.email || '';
   const clienteCreditos = document.getElementById('cliente-creditos');
   if (clienteCreditos) clienteCreditos.textContent = currentUser.credits ?? 0;
-  try { causasCliente = await apiGet('/cases/mias'); } catch (e) { causasCliente = []; toast(e.error || 'No se pudieron cargar tus causas'); }
+  try {
+    causasCliente = await apiGet('/cases/mias');
+    clientPortalLastError = '';
+    setClientPortalStatus(
+      causasCliente.length ? `${causasCliente.length} ${causasCliente.length === 1 ? 'consulta publicada' : 'consultas publicadas'}` : 'No has publicado consultas todavía',
+      causasCliente.length ? 'Tus consultas están sincronizadas con ABOGA GO.' : 'Cuando publiques una consulta aparecerá aquí automáticamente.',
+      'ok'
+    );
+  } catch (e) {
+    clientPortalLastError = e.error || 'No se pudieron cargar tus consultas';
+    setClientPortalStatus('No se pudieron cargar tus consultas', 'Esto puede ser un problema de conexión o del servidor. Tus consultas no se han borrado.', 'error');
+    if (!silent) toast(clientPortalLastError);
+  }
   renderCliente();
 }
 
@@ -464,6 +514,10 @@ function renderCliente() {
   const taken = causasCliente.filter(c => c.taken || c.status === 'en_proceso').length;
   document.getElementById('stat-causas').textContent = causasCliente.length;
   document.getElementById('stat-contactos').textContent = taken;
+  if (clientPortalLastError) {
+    box.innerHTML = `<div class="card empty client-portal-error"><strong>No pudimos mostrar tus consultas.</strong><span>${esc(clientPortalLastError)}</span><button type="button" class="btn btn-outline btn-sm btn-dark-outline" onclick="actualizarPortalCliente()">↻ Reintentar</button></div>`;
+    return;
+  }
   if (!causasCliente.length) { box.innerHTML = '<div class="card empty">Aún no has publicado consultas.</div>'; return; }
   box.innerHTML = causasCliente.map(c => {
     const [label, cls] = clientStatus(c);
@@ -482,7 +536,20 @@ async function cargarPortalAbogado() {
   currentUser = await getCurrentUser();
   document.getElementById('abogado-session-badge').textContent = currentUser.verified ? '● Abogado verificado' : '● Verificación pendiente';
   document.getElementById('saldo-creditos').textContent = currentUser.credits ?? 0;
-  await actualizarOportunidadesAbogado(false);
+  if (!currentUser.verified) {
+    causasAbogado.disponibles = [];
+    renderDisponibles();
+    const title = document.getElementById('opportunity-status-title');
+    const detail = document.getElementById('opportunity-status-detail');
+    const updated = document.getElementById('opportunity-updated');
+    const button = document.getElementById('opportunity-refresh-btn');
+    if (title) title.textContent = 'Tu Portal abogado está activo';
+    if (detail) detail.textContent = 'Tus antecedentes profesionales están pendientes de verificación. Podrás revisar y tomar oportunidades cuando tu cuenta sea aprobada.';
+    if (updated) updated.textContent = 'Estado: verificación pendiente';
+    if (button) button.disabled = true;
+  } else {
+    await actualizarOportunidadesAbogado(false);
+  }
   renderPremiumCard();
   cargarDashboardPro();
   if (opportunityRefreshTimer) clearInterval(opportunityRefreshTimer);
@@ -869,7 +936,7 @@ document.getElementById('local-login-btn')?.addEventListener('click', loginLocal
 document.getElementById('local-register-btn')?.addEventListener('click', registerLocal);
 document.getElementById('verify-email-code')?.addEventListener('click', verifyRegisterCode);
 document.getElementById('resend-email-code')?.addEventListener('click', registerLocal);
-document.getElementById('login-google')?.addEventListener('click', e => { e.preventDefault(); location.href = `${API_BASE}/auth/google`; });
+document.getElementById('login-google')?.addEventListener('click', e => { e.preventDefault(); let portal = selectedLoginPortal; try { portal = localStorage.getItem('abogago_login_portal_intent') || portal; } catch (_) {} location.href = `${API_BASE}/auth/google${portal === 'abogado' || portal === 'cliente' ? `?portal=${encodeURIComponent(portal)}` : ''}`; });
 
 initSesion();
 switchView('landing');

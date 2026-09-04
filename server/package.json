@@ -1,8 +1,8 @@
 {
   "name": "aboga-go-api",
-  "version": "7.1.2",
+  "version": "7.1.6",
   "private": true,
-  "description": "Backend ABOGA GO V7.1.2 — 2FA, cifrado de datos sensibles, backups, hardening Cloudflare y gestión de portales administrativos",
+  "description": "Backend ABOGA GO V7.1.5 — hardening de autenticación, límites de solicitudes, respuestas administrativas seguras y acceso robusto al Portal abogado",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -29,5 +29,9 @@
     "otplib": "^12.0.1",
     "qrcode": "^1.5.4"
   },
-  "author": "LimónStudioss. s.melladoo"
+  "author": "LimónStudioss. s.melladoo",
+  "engines": {
+    "node": "22.x",
+    "npm": ">=10"
+  }
 }

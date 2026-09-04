@@ -41,14 +41,14 @@
     </div>
 
     <div class="tabbar">
-      <div class="tab active" data-adm="usuarios" data-permission="admin" onclick="setAdminTab('usuarios')">Usuarios</div>
-      <div class="tab" data-adm="verificacion" data-permission="review" onclick="setAdminTab('verificacion')">Verificación abogados</div>
-      <div class="tab" data-adm="causas" data-permission="admin" onclick="setAdminTab('causas')">Causas activas</div>
-      <div class="tab" data-adm="creditos" data-permission="admin" onclick="setAdminTab('creditos')">Créditos</div>
-      <div class="tab" data-adm="transferencias" data-permission="admin" onclick="setAdminTab('transferencias')">Transferencias</div>
-      <div class="tab" data-adm="compras" data-permission="admin" onclick="setAdminTab('compras')">Compras JSON</div>
-      <div class="tab" data-adm="seguridad" data-permission="admin" onclick="setAdminTab('seguridad')">Seguridad</div>
-      <div class="tab" data-adm="roles" data-permission="creator" onclick="setAdminTab('roles')">Agregar roles</div>
+      <div class="tab active" data-adm="usuarios" data-permission="users_manage" onclick="setAdminTab('usuarios')">Usuarios</div>
+      <div class="tab" data-adm="verificacion" data-permission="verification_manage" onclick="setAdminTab('verificacion')">Verificación abogados</div>
+      <div class="tab" data-adm="causas" data-permission="cases_manage" onclick="setAdminTab('causas')">Causas activas</div>
+      <div class="tab" data-adm="creditos" data-permission="credits_manage" onclick="setAdminTab('creditos')">Créditos</div>
+      <div class="tab" data-adm="transferencias" data-permission="payments_manage" onclick="setAdminTab('transferencias')">Transferencias</div>
+      <div class="tab" data-adm="compras" data-permission="payments_manage" onclick="setAdminTab('compras')">Compras JSON</div>
+      <div class="tab" data-adm="seguridad" data-permission="security_view" onclick="setAdminTab('seguridad')">Seguridad</div>
+      <div class="tab" data-adm="roles" data-permission="roles_manage" onclick="setAdminTab('roles')">Agregar roles</div>
     </div>
 
     <div id="admin-usuarios" class="card"></div>

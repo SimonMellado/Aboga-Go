@@ -9,6 +9,7 @@ async function requireAuth(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'], issuer: 'abogago-api', audience: 'abogago-web' });
     const user = await User.findById(payload.id);
     if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
+    if (user.active === false) return res.status(403).json({ error: 'Esta cuenta fue desactivada. Contacta al equipo de ABOGA GO.' });
     const currentVersion = Number(user.security?.tokenVersion || 0);
     const tokenVersion = payload.ver == null ? 0 : Number(payload.ver);
     if (tokenVersion !== currentVersion) return res.status(401).json({ error: 'La sesión fue cerrada por seguridad. Inicia sesión nuevamente.' });
@@ -33,6 +34,21 @@ function effectiveStaffRole(user) {
   return 'none';
 }
 
+function hasStaffPermission(user, permission) {
+  const staffRole = effectiveStaffRole(user);
+  if (staffRole === 'creador' || staffRole === 'admin') return true;
+  if (staffRole === 'moderador' && permission === 'verification_manage') return true;
+  return Array.isArray(user?.staffPermissions) && user.staffPermissions.includes(permission);
+}
+
+function requireStaffPermission(permission) {
+  return (req, res, next) => {
+    if (!hasStaffPermission(req.user, permission)) return res.status(403).json({ error: 'No tienes el permiso necesario para esta acción' });
+    req.staffPermission = permission;
+    next();
+  };
+}
+
 function requireStaff(...roles) {
   return (req, res, next) => {
     const staffRole = effectiveStaffRole(req.user);
@@ -42,4 +58,4 @@ function requireStaff(...roles) {
   };
 }
 
-module.exports = { requireAuth, requireRole, requireStaff, effectiveStaffRole };
+module.exports = { requireAuth, requireRole, requireStaff, requireStaffPermission, hasStaffPermission, effectiveStaffRole };
