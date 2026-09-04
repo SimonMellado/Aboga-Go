@@ -22,6 +22,9 @@ let resendTimer = null;
 let selectedRegisterRole = 'cliente';
 let selectedLoginPortal = 'cliente';
 let pendingRegisterLawyer = null;
+let adminPortalMode = false;
+let adminPortalTargetId = '';
+let adminPortalActor = null;
 
 const PUBLIC_CASE_CATALOG = {
   'Casos más frecuentes': ['Pensión alimenticia','Inmigración en Chile','Divorcio','Herencias y posesiones efectivas','Deudas y embargos','Compra y arriendo de propiedades','Accidentes de tránsito','Abuso sexual y violación','Tuición','Juicio o reconocimiento de paternidad','Régimen de visitas','Defensa de derechos laborales','Despido injustificado','Robos y hurtos','Violencia intrafamiliar','Manejo en estado de ebriedad','Injurias y calumnias','Tráfico de drogas','Negligencia médica','Estafas y delitos económicos','Problemas entre vecinos'],
@@ -66,7 +69,7 @@ function continuarCasoPublico() {
   localStorage.setItem('abogago_pending_case', selectedPublicCase);
   if (!currentUser) { openLoginModal(); return toast('Tu caso quedó seleccionado. Inicia sesión o crea una cuenta para publicarlo gratis.'); }
   if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden');
-  if (isPrivilegedStaffLawyer()) return toast('La vista de cliente para administración es solo lectura');
+  if (isPrivilegedStaffLawyer() && !adminPortalMode) return toast('La vista de cliente para administración es solo lectura');
   if (currentUser.role !== 'cliente') return toast('Para publicar una consulta necesitas una cuenta de cliente');
   switchView('cliente');
   setTimeout(() => { applyPendingPublicCase(); document.getElementById('c-tipo')?.scrollIntoView({behavior:'smooth',block:'center'}); }, 120);
@@ -295,13 +298,44 @@ async function afterLogin() {
   actualizarNavSesion();
   cargarNotificaciones();
   if (staffRoleOf() === 'moderador') { window.location.href = 'admin.html'; return; }
-  if (isPrivilegedStaffLawyer()) { switchView('abogado'); return; }
+  if (isPrivilegedStaffLawyer() && !adminPortalMode) { switchView('abogado'); return; }
   if (currentUser.role === 'sin_definir') document.getElementById('role-modal')?.classList.remove('hidden');
   else if (currentUser.role === 'cliente' && localStorage.getItem('abogago_pending_case')) switchView('cliente');
   else switchView(currentUser.role === 'cliente' ? 'cliente' : currentUser.role === 'abogado' ? 'abogado' : 'landing');
 }
 
-async function logout() { try { await apiPost('/auth/logout'); } catch (e) {} currentUser = null; actualizarNavSesion(); document.getElementById('notifications-panel')?.classList.add('hidden'); switchView('landing'); }
+async function logout() {
+  if (adminPortalMode) {
+    try { sessionStorage.removeItem('abogago_admin_portal_token'); } catch (_) {}
+    location.href = 'admin.html';
+    return;
+  }
+  try { await apiPost('/auth/logout'); } catch (e) {} currentUser = null; actualizarNavSesion(); document.getElementById('notifications-panel')?.classList.add('hidden'); switchView('landing');
+}
+
+function salirModoAdministracion() {
+  if (!adminPortalMode) return;
+  try { sessionStorage.removeItem('abogago_admin_portal_token'); } catch (_) {}
+  location.href = 'admin.html';
+}
+
+function activarBannerAdminPortal(role) {
+  const label = role === 'abogado' ? 'abogado' : 'cliente';
+  const ids = role === 'abogado' ? ['view-abogado'] : ['view-cliente'];
+  ids.forEach(id => {
+    const view = document.getElementById(id);
+    if (!view) return;
+    let banner = view.querySelector('.admin-live-portal-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'admin-live-portal-banner';
+      const shell = view.querySelector('.app-shell');
+      const head = shell?.querySelector('.app-head');
+      if (head?.nextSibling) shell.insertBefore(banner, head.nextSibling); else shell?.prepend(banner);
+    }
+    banner.innerHTML = `<div><strong>⚙ Modo administración · Portal ${label}</strong><span>Estás operando esta cuenta directamente. Los cambios quedan asociados a la cuenta seleccionada y se registran en auditoría.</span></div><button type="button" class="btn btn-outline btn-sm" onclick="salirModoAdministracion()">← Volver al panel admin</button>`;
+  });
+}
 
 function actualizarNavSesion() {
   const session = document.getElementById('nav-session');
@@ -319,6 +353,27 @@ function actualizarNavSesion() {
 }
 
 async function initSesion() {
+  const params = new URLSearchParams(location.search);
+  const requestedAdminTarget = String(params.get('adminPortalUser') || '').trim();
+  if (requestedAdminTarget) {
+    try {
+      const response = await fetch(`${API_BASE}/admin/usuarios/${encodeURIComponent(requestedAdminTarget)}/portal-session`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.token) throw data;
+      sessionStorage.setItem('abogago_admin_portal_token', data.token);
+      adminPortalMode = true;
+      adminPortalTargetId = requestedAdminTarget;
+      adminPortalActor = true;
+      const cleanUrl = `${location.pathname}?view=${encodeURIComponent(data.portal)}`;
+      history.replaceState({}, '', cleanUrl);
+    } catch (e) {
+      try { sessionStorage.removeItem('abogago_admin_portal_token'); } catch (_) {}
+      document.body.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:24px;font-family:Inter,Arial,sans-serif"><div style="max-width:520px;text-align:center"><h2>No se pudo abrir el portal administrativo</h2><p>${esc(e?.error || 'La sesión administrativa no es válida o expiró.')}</p><button class="btn btn-ink" onclick="location.href='admin.html'">Volver al panel admin</button></div></div>`;
+      return;
+    }
+  } else {
+    try { sessionStorage.removeItem('abogago_admin_portal_token'); } catch (_) {}
+  }
   currentUser = await getCurrentUser();
   try {
     const remotePrices = await apiGet('/payments/precios');
@@ -333,13 +388,17 @@ async function initSesion() {
   setPlanSelection(selectedPlan);
   actualizarNavSesion();
   if (currentUser) cargarNotificaciones();
-  const params = new URLSearchParams(location.search);
   if (params.get('admin') === '1' && !currentUser) setTimeout(() => openLoginModal(), 0);
   if (params.get('admin') === '1' && isStaffUser()) { window.location.href = 'admin.html'; return; }
   if (params.get('login') === 'exitoso' && isPrivilegedStaffLawyer()) setTimeout(() => switchView('abogado'), 0);
   if (params.get('login') === 'elegir_rol' && currentUser) document.getElementById('role-modal')?.classList.remove('hidden');
   if (params.get('login') === '2fa' && !currentUser) { openLoginModal(); showLogin2FA(); }
   if (params.get('login') === '2fa_required') toast('Esta cuenta administrativa debe activar 2FA antes de continuar.');
+  if (adminPortalMode) {
+    activarBannerAdminPortal(currentUser?.role);
+    if (currentUser?.role === 'cliente') setTimeout(() => switchView('cliente'), 0);
+    if (currentUser?.role === 'abogado') setTimeout(() => switchView('abogado'), 0);
+  }
   if (params.get('pago') === 'exitoso') toast('Pago aprobado. Créditos agregados.');
   if (params.get('pago') === 'procesando') toast('Pago recibido. Estamos terminando de acreditar tus créditos.');
   if (params.get('plan') === 'exitoso') toast('Plan activado correctamente.');
@@ -464,7 +523,7 @@ async function cargarPortalCliente(options = {}) {
   currentUser = await getCurrentUser();
   if (!currentUser) return;
   programarActualizacionPortalCliente();
-  if (isPrivilegedStaffLawyer()) {
+  if (isPrivilegedStaffLawyer() && !adminPortalMode) {
     setClientStaffPreview(true);
     document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>Vista ${staffRoleOf() === 'creador' ? 'creador' : 'admin'}`;
     const clienteCreditos = document.getElementById('cliente-creditos');
@@ -472,11 +531,11 @@ async function cargarPortalCliente(options = {}) {
     document.getElementById('stat-causas').textContent = '—';
     document.getElementById('stat-contactos').textContent = '—';
     const box = document.getElementById('cliente-causas');
-    if (box) box.innerHTML = '<div class="card empty staff-preview-empty"><strong>Vista del Portal cliente</strong><span>Esta vista es solo de demostración para administración. Para revisar las consultas reales de una cuenta, entra a Panel admin → Usuarios y abre su portal.</span></div>';
+    if (box) box.innerHTML = '<div class="card empty staff-preview-empty"><strong>Vista del Portal cliente</strong><span>Esta vista es solo de demostración para administración. Para operar una cuenta, abre su portal desde Panel admin → Usuarios.</span></div>';
     return;
   }
   if (currentUser.role !== 'cliente') return;
-  setClientStaffPreview(false);
+  if (!adminPortalMode) setClientStaffPreview(false);
   document.getElementById('cliente-session-pill').innerHTML = `<span class="dot"></span>${esc(currentUser.name || currentUser.email)}`;
   if (!silent) {
     setClientPortalStatus('Cargando tus consultas…', 'Estamos consultando tus publicaciones en el servidor.', 'loading');
@@ -747,6 +806,7 @@ async function comprarCreditosDesdePanel() {
 }
 
 async function iniciarFlow(kind, productId) {
+  if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan o créditos.');
   try {
     const data = await apiPost('/payments/flow/create', { kind, productId, country: 'CL' });
     if (!data?.url) throw { error: 'Flow no entregó una URL de pago' };
@@ -761,6 +821,7 @@ async function iniciarFlow(kind, productId) {
 }
 
 async function iniciarTransferencia(kind, productId, targetId) {
+  if (adminPortalMode) return toast('Las transferencias reales están deshabilitadas en modo administración.');
   try {
     const data = await apiPost('/payments/transfer/init', { kind, productId, country: 'CL' });
     const catalogItem = kind === 'plan' ? precios.plans?.[productId] : precios.creditPacks?.[productId];
@@ -792,8 +853,9 @@ async function subirComprobanteTransferencia(paymentId) {
 }
 function renderPremiumCard() { const box = document.getElementById('premium-status'); const badge = document.getElementById('account-plan-badge'); if (!box) return; const p = currentUser.premium; const active = Boolean(p?.active && p?.planEnd && new Date(p.planEnd).getTime() > Date.now()); if (active) { badge.textContent = p.tier === 'pro' ? '🏆 Premium Pro' : '★ Premium'; badge.className = `plan-badge ${p.tier === 'pro' ? 'plan-pro' : 'plan-premium'}`; const renewal = p.autoRenew === false ? `Finaliza: ${fmtDate(p.planEnd)} · sin renovación automática.` : `Próxima renovación: ${fmtDate(p.planEnd)}.`; box.innerHTML = `<div class="premium-active-box"><strong>Plan activo</strong><p>Prioridad de ${precios.priorityHours || 24} horas. ${renewal}</p>${p.autoRenew === false ? '' : '<button class="btn btn-outline btn-sm btn-dark-outline" onclick="cancelarRenovacion()">Cancelar renovación automática</button>'}</div>`; } else { badge.textContent = 'Plan gratuito'; badge.className = 'plan-badge plan-standard'; box.innerHTML = '<div class="premium-smallprint">Las oportunidades nuevas permanecen reservadas durante 24 horas. Si nadie las toma, se habilitan gratis para abogados verificados.</div>'; } }
 async function cancelarRenovacion() { if (!confirm('¿Deseas desactivar la renovación automática? Mantendrás Premium hasta la fecha de término.')) return; try { const data = await apiPost('/payments/oneclick/plan/cancelar-renovacion', {}); currentUser = await getCurrentUser(); toast(data.message || 'Renovación automática desactivada'); renderPremiumCard(); } catch (e) { toast(e.error || 'No se pudo cancelar la renovación'); } }
-async function contratarPremium(tier = selectedPlan) { const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'oneclick') return toast('Transbank Oneclick estará disponible próximamente.'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); if (selectedPlanPaymentMethod === 'flow') return iniciarFlow('plan', tier); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier, country: 'CL' }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier, country: 'CL' }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
+async function contratarPremium(tier = selectedPlan) { if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan.'); const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'oneclick') return toast('Transbank Oneclick estará disponible próximamente.'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); if (selectedPlanPaymentMethod === 'flow') return iniciarFlow('plan', tier); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier, country: 'CL' }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier, country: 'CL' }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
 function irAPagos(tipo = 'creditos') {
+  if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan o créditos.');
   if (!currentUser) return openLoginModal();
   if (currentUser.role !== 'abogado') return toast('Disponible para abogados');
   switchView('abogado');
@@ -866,11 +928,11 @@ async function guardarPerfil() {
   try { const data = await apiPatch('/account/profile', { firstName: document.getElementById('acc-first').value, lastName: document.getElementById('acc-last').value, lawyerProfile }); currentUser = data.user; actualizarNavSesion(); toast('Perfil guardado'); } catch (e) { toast(e.error || 'No se pudo guardar'); }
 }
 async function guardarPreferencias() { try { const data = await apiPatch('/account/settings', { emailNotifications: document.getElementById('set-email').checked, opportunityNotifications: document.getElementById('set-opportunities').checked, proposalNotifications: document.getElementById('set-proposals').checked }); currentUser = data.user; toast('Preferencias guardadas'); } catch (e) { toast(e.error || 'No se pudo guardar'); } }
-async function cambiarPassword() { try { await apiPatch('/account/password', { currentPassword: document.getElementById('acc-pass-current').value, newPassword: document.getElementById('acc-pass-new').value }); document.getElementById('acc-pass-current').value = ''; document.getElementById('acc-pass-new').value = ''; toast('Contraseña actualizada'); } catch (e) { toast(e.error || 'No se pudo cambiar'); } }
-async function cerrarTodasLasSesiones() { if (!confirm('¿Cerrar la sesión en todos tus dispositivos? Tendrás que volver a iniciar sesión.')) return; try { await apiPost('/account/security/logout-all', {}); currentUser = null; actualizarNavSesion(); toast('Todas las sesiones fueron cerradas'); setTimeout(() => switchView('landing'), 350); } catch (e) { toast(e.error || 'No se pudieron cerrar las sesiones'); } }
+async function cambiarPassword() { if (adminPortalMode) return toast('No puedes cambiar la contraseña de una cuenta desde el modo portal administrativo.'); try { await apiPatch('/account/password', { currentPassword: document.getElementById('acc-pass-current').value, newPassword: document.getElementById('acc-pass-new').value }); document.getElementById('acc-pass-current').value = ''; document.getElementById('acc-pass-new').value = ''; toast('Contraseña actualizada'); } catch (e) { toast(e.error || 'No se pudo cambiar'); } }
+async function cerrarTodasLasSesiones() { if (adminPortalMode) return toast('No puedes cerrar sesiones del usuario desde el modo portal administrativo.'); if (!confirm('¿Cerrar la sesión en todos tus dispositivos? Tendrás que volver a iniciar sesión.')) return; try { await apiPost('/account/security/logout-all', {}); currentUser = null; actualizarNavSesion(); toast('Todas las sesiones fueron cerradas'); setTimeout(() => switchView('landing'), 350); } catch (e) { toast(e.error || 'No se pudieron cerrar las sesiones'); } }
 
 
-async function iniciar2FA() {
+async function iniciar2FA() { if (adminPortalMode) return toast('La configuración de 2FA se administra desde la cuenta del usuario, no desde este modo.');
   try {
     const data = await apiPost('/account/security/2fa/setup', { currentPassword: document.getElementById('two-factor-password')?.value || '' });
     document.getElementById('two-factor-qr').src = data.qrDataUrl;

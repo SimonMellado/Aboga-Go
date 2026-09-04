@@ -1,6 +1,6 @@
 {
   "name": "aboga-go-api",
-  "version": "7.1.6",
+  "version": "7.1.7",
   "private": true,
   "description": "Backend ABOGA GO V7.1.5 — hardening de autenticación, límites de solicitudes, respuestas administrativas seguras y acceso robusto al Portal abogado",
   "main": "server.js",

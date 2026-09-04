@@ -6,9 +6,19 @@ const API_BASE = (() => {
   return productionApi;
 })();
 
+function getAdminPortalToken(){
+  try {
+    if (location.pathname.endsWith('/admin.html')) return '';
+    return sessionStorage.getItem('abogago_admin_portal_token') || '';
+  } catch (_) { return ''; }
+}
+
 async function apiFetch(path, options = {}) {
   try {
-    return await fetch(API_BASE + path, { credentials:'include', ...options });
+    const headers = new Headers(options.headers || {});
+    const adminToken = getAdminPortalToken();
+    if (adminToken) headers.set('X-Admin-Portal-Token', adminToken);
+    return await fetch(API_BASE + path, { credentials:'include', ...options, headers });
   } catch (error) {
     throw { error: 'No se pudo conectar con ABOGA GO. Revisa que el backend de Render esté activo y que Cloudflare esté usando la URL correcta de la API.' };
   }

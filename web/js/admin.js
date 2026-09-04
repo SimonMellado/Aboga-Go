@@ -144,27 +144,12 @@ function renderPreviewCase(c, portal){
 
 async function verPortalUsuario(userId){
   try{
-    const data = await apiGet(`/admin/usuarios/${userId}/portal`);
-    const u = data.user || {};
-    const content = document.getElementById('portal-preview-content');
-    const roleLabel = data.portal === 'cliente' ? 'Portal Cliente' : 'Portal Abogado';
-    let body = '';
-    if(data.portal === 'cliente'){
-      const cases = data.cases || [];
-      const taken = cases.filter(c=>c.selectedLawyer || c.status==='en_proceso').length;
-      const closed = cases.filter(c=>c.status==='cerrada').length;
-      body = `<div class="admin-preview-stats"><div class="admin-preview-stat"><span>Consultas</span><strong>${cases.length}</strong></div><div class="admin-preview-stat"><span>Tomadas</span><strong>${taken}</strong></div><div class="admin-preview-stat"><span>Cerradas</span><strong>${closed}</strong></div><div class="admin-preview-stat"><span>Créditos</span><strong>${Number(u.credits||0)}</strong></div></div><div class="admin-preview-section"><h3>Mis consultas</h3>${cases.length?cases.map(c=>renderPreviewCase(c,'cliente')).join(''):'<div class="admin-preview-empty">Este cliente todavía no ha publicado consultas.</div>'}</div>`;
-    } else {
-      const premiumActive = Boolean(u.premium?.active && u.premium?.planEnd && new Date(u.premium.planEnd).getTime()>Date.now());
-      const tier = premiumActive ? (u.premium?.tier==='pro'?'Premium Pro':'Premium') : 'Free';
-      const stats=data.stats||{};
-      const available=(data.available||[]).filter(c=>!c.taken || c.owned);
-      const history=data.history||[];
-      body = `<div class="admin-preview-stats"><div class="admin-preview-stat"><span>Créditos</span><strong>${Number(u.credits||0)}</strong></div><div class="admin-preview-stat"><span>Plan</span><strong style="font-size:15px">${esc(tier)}</strong></div><div class="admin-preview-stat"><span>Casos adquiridos</span><strong>${Number(stats.acquired||0)}</strong></div><div class="admin-preview-stat"><span>Verificación</span><strong style="font-size:15px">${u.verified?'Verificado':'Pendiente'}</strong></div></div><div class="admin-preview-section"><h3>Oportunidades visibles</h3>${available.length?available.slice(0,30).map(c=>renderPreviewCase(c,'abogado')).join(''):'<div class="admin-preview-empty">No hay oportunidades visibles actualmente.</div>'}</div><div class="admin-preview-section"><h3>Historial adquirido</h3>${history.length?history.map(c=>renderPreviewCase({...c,owned:true,contactUnlocked:true},'abogado')).join(''):'<div class="admin-preview-empty">Este abogado todavía no ha adquirido oportunidades.</div>'}</div>`;
-    }
-    content.innerHTML = `<div class="admin-preview-banner">Vista administrativa de solo lectura. No estás iniciando sesión como este usuario y ninguna acción del cliente o abogado está habilitada.</div><div class="admin-preview-head"><div><div class="eyebrow">${roleLabel}</div><h2>${esc(u.name||u.email||'Usuario')}</h2><p>${esc(u.email||'')} · Cuenta creada ${u.createdAt?new Date(u.createdAt).toLocaleDateString('es-CL'):'—'}</p></div><span class="pill ${data.portal==='abogado'?'pill-brass':'pill-forest'}">${data.portal==='abogado'?'ABOGADO':'CLIENTE'}</span></div>${body}`;
-    document.getElementById('portal-preview-modal')?.classList.remove('hidden');
-    document.body.style.overflow='hidden';
+    const users = await apiGet('/admin/usuarios');
+    const target = users.find(u => String(u._id) === String(userId));
+    if (!target || !['cliente','abogado'].includes(target.role)) return toast('Este usuario no tiene un portal activo');
+    if (target.active === false) return toast('No puedes abrir el portal de una cuenta desactivada');
+    const url = `index.html?adminPortalUser=${encodeURIComponent(userId)}&view=${encodeURIComponent(target.role)}`;
+    window.open(url, '_blank', 'noopener');
   }catch(err){ toast(err.error || 'No se pudo abrir el portal'); }
 }
 

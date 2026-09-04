@@ -1,5 +1,6 @@
 /* Creado por LimónStudioss. s.melladoo */
 const router = require('express').Router();
+const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
 const { requireAuth, requireStaff, requireStaffPermission, hasStaffPermission, effectiveStaffRole } = require('../middleware/auth');
@@ -135,6 +136,20 @@ router.post('/usuarios/:id/premium', requireStaffPermission('users_manage'), asy
   res.json({ ok: true, user: safeStaffUser(target) });
 });
 
+router.post('/usuarios/:id/portal-session', requireStaffPermission('users_manage'), async (req, res) => {
+  const target = await User.findById(req.params.id).select('_id role active staffRole');
+  if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+  if (target.active === false) return res.status(403).json({ error: 'No puedes abrir el portal de una cuenta desactivada' });
+  if (!['cliente', 'abogado'].includes(target.role)) return res.status(400).json({ error: 'Este usuario no tiene un portal de cliente o abogado' });
+  const token = jwt.sign(
+    { typ: 'admin_portal', actorId: req.user._id.toString(), targetId: target._id.toString(), portalRole: target.role },
+    process.env.JWT_SECRET,
+    { algorithm: 'HS256', issuer: 'abogago-api', audience: 'abogago-web', expiresIn: '30m' }
+  );
+  await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_session', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: target.role } });
+  res.json({ ok: true, token, portal: target.role, expiresIn: 1800 });
+});
+
 router.get('/usuarios/:id/portal', requireStaffPermission('users_manage'), async (req, res) => {
   const target = await User.findById(req.params.id).select('name firstName lastName email role staffRole verified verificationStatus credits premium lawyerProfile createdAt settings');
   if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
@@ -163,7 +178,7 @@ router.get('/usuarios/:id/portal', requireStaffPermission('users_manage'), async
       .lean();
     const safeCases = decryptDeep(cases);
     await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_preview', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: 'cliente' } });
-    return res.json({ mode: 'readonly', portal: 'cliente', user: baseUser, cases: safeCases });
+    return res.json({ mode: 'admin', portal: 'cliente', user: baseUser, cases: safeCases });
   }
 
   const now = Date.now();
@@ -190,7 +205,7 @@ router.get('/usuarios/:id/portal', requireStaffPermission('users_manage'), async
   const freeAcquired = historySafe.filter(c => c.acquisitionMode === 'free_after_priority').length;
   const stats = { acquired: historySafe.length, premiumAcquired, freeAcquired, creditsSpent: premiumAcquired, profileViews: target.lawyerProfile?.profileViews || 0 };
   await recordSecurityEvent({ req, user: req.user, email: req.user.email, type: 'admin_portal_preview', outcome: 'success', metadata: { targetUserId: String(target._id), portalRole: 'abogado' } });
-  res.json({ mode: 'readonly', portal: 'abogado', user: baseUser, available, history: historySafe, stats, priorityHours });
+  res.json({ mode: 'admin', portal: 'abogado', user: baseUser, available, history: historySafe, stats, priorityHours });
 });
 
 router.get('/verificacion-pendiente', requireStaffPermission('verification_manage'), async (req, res) => {
