@@ -15,6 +15,17 @@ const { recordSecurityEvent, isAllowedFileSignature } = require('../utils/securi
 
 function clean(v, max = 300) { return String(v || '').trim().replace(/\s+/g, ' ').slice(0, max); }
 function cleanArray(v, maxItems = 10, maxLen = 80) { return Array.isArray(v) ? v.map(x => clean(x, maxLen)).filter(Boolean).slice(0, maxItems) : []; }
+function normalizeRut(value) { return String(value || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+function isValidRut(value) {
+  const rut = normalizeRut(value);
+  if (rut.length < 8 || rut.length > 9) return false;
+  const body = rut.slice(0, -1); const dv = rut.slice(-1);
+  let sum = 0; let factor = 2;
+  for (let i = body.length - 1; i >= 0; i -= 1) { sum += Number(body[i]) * factor; factor = factor === 7 ? 2 : factor + 1; }
+  const calculated = 11 - (sum % 11);
+  const expected = calculated === 11 ? '0' : calculated === 10 ? 'K' : String(calculated);
+  return dv === expected;
+}
 function cleanProfessionalUrl(v) {
   const raw = clean(v, 300);
   if (!raw) return '';
@@ -116,6 +127,15 @@ router.patch('/profile', requireAuth, async (req, res) => {
   user.lastName = clean(req.body.lastName ?? user.lastName, 60);
   user.name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.name;
   if (user.role === 'abogado') {
+    if (req.body.rut !== undefined) {
+      const rut = clean(req.body.rut, 20);
+      if (!isValidRut(rut)) return res.status(400).json({ error: 'Ingresa un RUT chileno válido' });
+      const normalized = normalizeRut(rut);
+      const duplicate = await User.findOne({ rutNormalized: normalized, _id: { $ne: user._id } }).select('_id');
+      if (duplicate) return res.status(409).json({ error: 'Ese RUT ya está asociado a otra cuenta' });
+      user.rut = rut;
+      user.rutNormalized = normalized;
+    }
     const p = req.body.lawyerProfile || {};
     user.lawyerProfile.headline = clean(p.headline, 120);
     user.lawyerProfile.bio = clean(p.bio, 1200);

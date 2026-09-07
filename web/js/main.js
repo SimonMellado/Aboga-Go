@@ -299,6 +299,7 @@ async function afterLogin() {
   cargarNotificaciones();
   if (staffRoleOf() === 'moderador') { window.location.href = 'admin.html'; return; }
   if (isPrivilegedStaffLawyer() && !adminPortalMode) { switchView('abogado'); return; }
+  if (currentUser.role === 'abogado' && !adminPortalMode && !lawyerProfileComplete(currentUser)) { showLegacyLawyerOnboarding(); return; }
   if (currentUser.role === 'sin_definir') document.getElementById('role-modal')?.classList.remove('hidden');
   else if (currentUser.role === 'cliente' && localStorage.getItem('abogago_pending_case')) switchView('cliente');
   else switchView(currentUser.role === 'cliente' ? 'cliente' : currentUser.role === 'abogado' ? 'abogado' : 'landing');
@@ -352,6 +353,68 @@ function actualizarNavSesion() {
   session.innerHTML = `<button class="nav-btn ghost" onclick="switchView('cuenta')">${esc(currentUser.firstName || currentUser.name || 'Mi cuenta')} ${tier}</button><button class="nav-btn" onclick="logout()">Salir</button>`;
 }
 
+function lawyerProfileComplete(user = currentUser) {
+  if (!user || user.role !== 'abogado') return true;
+  const p = user.lawyerProfile || {};
+  const rut = String(user.rut || '').trim();
+  const phone = String(p.phone || '').trim();
+  const university = String(p.university || '').trim();
+  const titleYear = Number(p.titleYear || 0);
+  const specialties = Array.isArray(p.specialties) ? p.specialties.filter(Boolean) : [];
+  return Boolean(rut && phone.length >= 8 && String(p.region || '').trim() && String(p.comuna || '').trim() && university && Number.isInteger(titleYear) && titleYear >= 1900 && titleYear <= 2100 && specialties.length && Array.isArray(p.serviceModes) && p.serviceModes.length);
+}
+function prefillLegacyLawyerForm(user = currentUser) {
+  if (!user || user.role !== 'abogado') return;
+  const p = user.lawyerProfile || {};
+  const values = {
+    'role-rut': user.rut || '',
+    'role-phone': p.phone || '',
+    'role-region': p.region || '',
+    'role-comuna': p.comuna || '',
+    'role-university': p.university || '',
+    'role-title-year': p.titleYear || '',
+    'role-title-number': p.titleNumber || '',
+    'role-specialties': Array.isArray(p.specialties) ? p.specialties.join(', ') : ''
+  };
+  Object.entries(values).forEach(([id, value]) => { const el = document.getElementById(id); if (el) el.value = value; });
+  const modes = Array.isArray(p.serviceModes) ? p.serviceModes.map(x => String(x).toLowerCase()) : [];
+  const online = document.getElementById('role-mode-online');
+  const presencial = document.getElementById('role-mode-presencial');
+  if (online) online.checked = modes.length ? modes.includes('online') : true;
+  if (presencial) presencial.checked = modes.includes('presencial');
+}
+function showLegacyLawyerOnboarding() {
+  const modal = document.getElementById('role-modal');
+  if (!modal || !currentUser || currentUser.role !== 'abogado' || lawyerProfileComplete(currentUser)) return false;
+  modal.classList.remove('hidden');
+  modal.querySelector('.role-actions')?.classList.add('hidden');
+  modal.querySelector('.role-card h3')?.replaceChildren(document.createTextNode('Completa tus antecedentes profesionales'));
+  modal.querySelector('.modal-copy')?.replaceChildren(document.createTextNode('Tu cuenta de abogado ya existe. Antes de continuar al Portal abogado, completa los antecedentes que faltan en este formulario.'));
+  mostrarFormAbogado();
+  prefillLegacyLawyerForm();
+  const button = modal.querySelector('#role-abogado-form button[onclick*="elegirRol"]');
+  if (button) { button.textContent = 'Guardar antecedentes y continuar'; button.onclick = () => guardarAntecedentesAbogadoAntiguo(); }
+  return true;
+}
+async function guardarAntecedentesAbogadoAntiguo() {
+  const payload = lawyerPayloadFrom('role');
+  if (!payload.rut || !payload.lawyerProfile.phone || !payload.lawyerProfile.region || !payload.lawyerProfile.comuna || !payload.lawyerProfile.university || !payload.lawyerProfile.titleYear || !payload.lawyerProfile.specialties.length || !payload.lawyerProfile.serviceModes.length) return toast('Completa RUT, teléfono, región, comuna, universidad, año, especialidades y modalidad de atención.');
+  if (!document.getElementById('role-lawyer-declaration')?.checked) return toast('Debes aceptar la declaración profesional');
+  try {
+    const data = await apiPatch('/account/profile', {
+      firstName: currentUser.firstName || '',
+      lastName: currentUser.lastName || '',
+      rut: payload.rut,
+      lawyerProfile: payload.lawyerProfile
+    });
+    currentUser = data.user;
+    document.getElementById('role-modal')?.classList.add('hidden');
+    actualizarNavSesion();
+    toast('Antecedentes guardados. Ya puedes continuar al Portal abogado.');
+    switchView('abogado');
+  } catch (e) { toast(e.error || 'No se pudieron guardar tus antecedentes'); }
+}
+
 async function initSesion() {
   const params = new URLSearchParams(location.search);
   const requestedAdminTarget = String(params.get('adminPortalUser') || '').trim();
@@ -375,6 +438,7 @@ async function initSesion() {
     try { sessionStorage.removeItem('abogago_admin_portal_token'); } catch (_) {}
   }
   currentUser = await getCurrentUser();
+  if (currentUser?.role === 'abogado' && !isPrivilegedStaffLawyer() && !lawyerProfileComplete(currentUser)) setTimeout(() => showLegacyLawyerOnboarding(), 120);
   try {
     const remotePrices = await apiGet('/payments/precios');
     precios = {
@@ -470,7 +534,7 @@ async function elegirRol(role) {
 }
 
 function irACliente() { if (!currentUser) { openLoginModal(); return toast('Inicia sesión para publicar gratis'); } if (currentUser.role === 'sin_definir') return document.getElementById('role-modal')?.classList.remove('hidden'); if (currentUser.role !== 'cliente' && !isPrivilegedStaffLawyer()) return toast('Esta sección es para clientes'); switchView('cliente'); }
-function irAAbogado() { if (!currentUser) { openLoginModal('abogado'); return toast('Inicia sesión como abogado'); } if (currentUser.role === 'sin_definir') { try { localStorage.setItem('abogago_login_portal_intent', 'abogado'); } catch (_) {} return document.getElementById('role-modal')?.classList.remove('hidden'); } if (currentUser.role !== 'abogado') return toast('Esta cuenta está registrada como cliente. Para entrar al Portal abogado necesitas una cuenta de abogado.'); switchView('abogado'); }
+function irAAbogado() { if (!currentUser) { openLoginModal('abogado'); return toast('Inicia sesión como abogado'); } if (currentUser.role === 'sin_definir') { try { localStorage.setItem('abogago_login_portal_intent', 'abogado'); } catch (_) {} return document.getElementById('role-modal')?.classList.remove('hidden'); } if (currentUser.role !== 'abogado') return toast('Esta cuenta está registrada como cliente. Para entrar al Portal abogado necesitas una cuenta de abogado.'); if (!isPrivilegedStaffLawyer() && !lawyerProfileComplete(currentUser)) { showLegacyLawyerOnboarding(); return; } switchView('abogado'); }
 
 function bindChipGroup(selector) { document.querySelectorAll(`${selector} .radio-chip`).forEach(c => c.addEventListener('click', () => { document.querySelectorAll(`${selector} .radio-chip`).forEach(x => x.classList.remove('sel')); c.classList.add('sel'); })); }
 ['#c-atencion', '#c-intencion', '#c-urgencia'].forEach(bindChipGroup);
