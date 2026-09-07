@@ -209,8 +209,18 @@ router.get('/usuarios/:id/portal', requireStaffPermission('users_manage'), async
 });
 
 router.get('/verificacion-pendiente', requireStaffPermission('verification_manage'), async (req, res) => {
-  const pendientes = await User.find({ role: 'abogado', verified: false }).select('name firstName lastName email role rut tituloDocUrl titleDocument.originalName titleDocument.mimeType verificationStatus verificationSubmittedAt verificationNotes lawyerProfile').sort({ verificationSubmittedAt: 1, createdAt: 1 });
+  const pendientes = await User.find({ role: 'abogado', verified: false, verificationStatus: 'pending' }).select('name firstName lastName email role rut tituloDocUrl titleDocument.originalName titleDocument.mimeType verificationStatus verificationSubmittedAt verificationNotes lawyerProfile').sort({ verificationSubmittedAt: 1, createdAt: 1 });
   res.json(pendientes);
+});
+
+router.get('/abogados-sin-certificado', requireStaffPermission('verification_manage'), async (req, res) => {
+  const sinCertificado = await User.find({
+    role: 'abogado',
+    verified: false,
+    tituloDocUrl: { $in: [null, ''] },
+    'titleDocument.originalName': { $in: [null, ''] },
+  }).select('name firstName lastName email role rut verificationStatus createdAt lawyerProfile').sort({ createdAt: -1 });
+  res.json(sinCertificado);
 });
 
 router.post('/verificar/:id', requireStaffPermission('verification_manage'), async (req, res) => {
