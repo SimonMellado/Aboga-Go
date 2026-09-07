@@ -19,6 +19,7 @@ let selectedPlan = 'premium';
 let activeProposalCaseId = null;
 let activeClientCaseId = null;
 let resendTimer = null;
+let resetResendTimer = null;
 let selectedRegisterRole = 'cliente';
 let selectedLoginPortal = 'cliente';
 let pendingRegisterLawyer = null;
