@@ -174,12 +174,9 @@ router.get('/google/callback', (req, res, next) => {
   }
   const portal = getOAuthPortal(req);
   clearOAuthPortalCookie(res);
-  return passport.authenticate('google', {
-    session: false,
-    failureRedirect: `${frontendBase()}/index.html?login=error`,
-  })(req, res, (err, user) => {
+  return passport.authenticate('google', { session: false }, (err, user, info) => {
     if (err || !user) {
-      console.error('google oauth callback:', err?.message || 'Usuario no disponible');
+      console.error('google oauth callback:', err?.message || info?.message || 'Usuario no disponible');
       return res.redirect(`${frontendBase()}/index.html?login=error`);
     }
     req.user = user;
@@ -202,7 +199,7 @@ router.get('/google/callback', (req, res, next) => {
       return res.redirect(`${frontendBase()}/index.html?login=${target}`);
     }
     loginAndRedirect(req, res, user, '/index.html?login=exitoso');
-  });
+  })(req, res, next);
 });
 
 router.get('/apple', (req, res, next) => {
@@ -216,20 +213,22 @@ router.post('/apple/callback', (req, res, next) => {
   if (!process.env.APPLE_CLIENT_ID || !process.env.APPLE_TEAM_ID || !process.env.APPLE_KEY_ID || !process.env.APPLE_PRIVATE_KEY_PATH) {
     return res.redirect(`${frontendBase()}/index.html?login=error`);
   }
-  return passport.authenticate('apple', {
-    session: false,
-    failureRedirect: `${frontendBase()}/index.html?login=error`,
-  })(req, res, () => {
-    if (staffNeeds2FA(req.user) && !twoFactorEnabled(req.user)) {
+  return passport.authenticate('apple', { session: false }, (err, user, info) => {
+    if (err || !user) {
+      console.error('apple oauth callback:', err?.message || info?.message || 'Usuario no disponible');
+      return res.redirect(`${frontendBase()}/index.html?login=error`);
+    }
+    req.user = user;
+    if (staffNeeds2FA(user) && !twoFactorEnabled(user)) {
       return res.redirect(`${frontendBase()}/index.html?login=2fa_required`);
     }
-    if (twoFactorEnabled(req.user)) {
-      setTwoFactorChallengeCookie(res, req.user, '');
+    if (twoFactorEnabled(user)) {
+      setTwoFactorChallengeCookie(res, user, '');
       return res.redirect(`${frontendBase()}/index.html?login=2fa`);
     }
-    const path = req.user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
-    loginAndRedirect(req, res, req.user, path);
-  });
+    const path = user.role === 'sin_definir' ? '/index.html?login=elegir_rol' : '/index.html?login=exitoso';
+    loginAndRedirect(req, res, user, path);
+  })(req, res, next);
 });
 
 router.post('/local/register/request-code', async (req, res) => {
