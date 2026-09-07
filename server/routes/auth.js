@@ -566,8 +566,8 @@ router.post('/local/password/request-code', async (req, res) => {
       mailResult = await sendResetCode({ to: email, code });
     } catch (mailError) {
       await EmailCode.deleteOne({ _id: record._id }).catch(() => {});
-      console.error('No se pudo enviar código de recuperación:', mailError.message);
-      return res.status(503).json({ error: 'No pudimos enviar el código por correo. Intenta nuevamente en unos minutos.' });
+      console.error(`No se pudo enviar código de recuperación: ${mailError.message} | resendStatus=${mailError.resendStatus || 'n/a'} | resendDetail=${mailError.resendDetail || 'n/a'}`);
+      return res.status(503).json({ error: 'No pudimos enviar el código por correo. Verifica la configuración de correo de ABOGA GO e inténtalo nuevamente.' });
     }
     res.json({ ok: true, expiresIn: 600, devMode: Boolean(mailResult.devMode), message: 'Si existe una cuenta local, enviaremos un código al correo' });
   } catch (err) {

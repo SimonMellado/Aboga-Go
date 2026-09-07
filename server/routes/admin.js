@@ -9,7 +9,7 @@ const Case = require('../models/Case');
 const Notification = require('../models/Notification');
 const ManualPayment = require('../models/ManualPayment');
 const CreditTransaction = require('../models/CreditTransaction');
-const { sendTransactional } = require('../config/mailer');
+const { sendTransactional, sendResetCode, verifyMailer } = require('../config/mailer');
 const SecurityEvent = require('../models/SecurityEvent');
 const SignupBonusClaim = require('../models/SignupBonusClaim');
 const { recordSecurityEvent } = require('../utils/security');
@@ -40,6 +40,34 @@ function safeStaffUser(user) {
 }
 
 router.use(requireAuth);
+
+
+router.get('/email/status', requireStaffPermission('security_view'), async (req, res) => {
+  const status = await verifyMailer();
+  res.json({
+    provider: status.provider || 'resend',
+    configured: Boolean(status.configured),
+    ready: Boolean(status.ready),
+    from: status.from || null,
+    error: status.error || null
+  });
+});
+
+router.post('/email/test', requireStaffPermission('security_view'), async (req, res) => {
+  const target = String(process.env.CREATOR_EMAIL || '').trim().toLowerCase();
+  if (!target) return res.status(503).json({ error: 'CREATOR_EMAIL no está configurado' });
+  try {
+    await sendTransactional({
+      to: target,
+      subject: 'Prueba de correo',
+      text: 'Esta es una prueba del servicio de correo transaccional de ABOGA GO. Si recibes este mensaje, Resend está enviando correctamente desde producción.'
+    });
+    res.json({ ok: true, message: `Correo de prueba enviado a ${target}` });
+  } catch (err) {
+    console.error(`Prueba de correo fallida: ${err.message} | resendStatus=${err.resendStatus || 'n/a'} | resendDetail=${err.resendDetail || 'n/a'}`);
+    res.status(503).json({ error: 'Resend no pudo enviar el correo de prueba. Revisa los logs de Render para ver el detalle de Resend.' });
+  }
+});
 
 router.get('/me', (req, res) => {
   const staffRole = effectiveStaffRole(req.user);
