@@ -140,7 +140,8 @@ function showLoginMethods() { const card=document.querySelector('#login-modal .l
 function showLocalLogin() { try { const intent = localStorage.getItem('abogago_login_portal_intent'); if (intent === 'abogado' || intent === 'cliente') selectedLoginPortal = intent; } catch (_) {} const card=document.querySelector('#login-modal .login-card'); card?.classList.remove('auth-register-mode'); card?.classList.add('auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('password-reset-step')?.classList.add('hidden'); document.getElementById('local-login-form')?.classList.remove('hidden'); document.getElementById('local-register-form')?.classList.add('hidden'); document.getElementById('auth-tab-login')?.classList.add('active'); document.getElementById('auth-tab-register')?.classList.remove('active'); resetAuthModalScroll(); }
 function showLocalRegister() { const card=document.querySelector('#login-modal .login-card'); card?.classList.add('auth-register-mode','auth-email-mode'); document.getElementById('login-methods')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); document.getElementById('local-login-form')?.classList.add('hidden'); document.getElementById('local-register-form')?.classList.remove('hidden'); document.getElementById('auth-tab-login')?.classList.remove('active'); document.getElementById('auth-tab-register')?.classList.add('active'); resetAuthModalScroll(); }
 function backToRegisterStep() { document.getElementById('login-code-step')?.classList.add('hidden'); document.getElementById('local-auth-step')?.classList.remove('hidden'); showLocalRegister(); }
-function showPasswordReset() { document.getElementById('local-auth-step')?.classList.add('hidden'); document.getElementById('password-reset-step')?.classList.remove('hidden'); }
+function showPasswordReset() { document.getElementById('local-auth-step')?.classList.add('hidden'); document.getElementById('password-reset-step')?.classList.remove('hidden'); document.getElementById('reset-final-fields')?.classList.add('hidden'); document.getElementById('reset-code').value=''; document.getElementById('reset-password').value=''; document.getElementById('reset-password-confirm').value=''; document.getElementById('reset-request-btn')?.removeAttribute('disabled'); clearInterval(resetResendTimer); resetAuthModalScroll(); setTimeout(() => document.getElementById('reset-email')?.focus(), 30); }
+function startResetResendCountdown() { clearInterval(resetResendTimer); let left=60; const btn=document.getElementById('reset-resend-btn'); const counter=document.getElementById('reset-resend-counter'); if(!btn||!counter)return; btn.disabled=true; counter.textContent=`(${left}s)`; resetResendTimer=setInterval(()=>{ left-=1; counter.textContent=left>0?`(${left}s)`:''; if(left<=0){clearInterval(resetResendTimer);btn.disabled=false;} },1000); }
 function setLoginPortal(role) {
   selectedLoginPortal = role === 'abogado' ? 'abogado' : 'cliente';
   try { localStorage.setItem('abogago_login_portal_intent', selectedLoginPortal); } catch (_) {}
@@ -281,17 +282,37 @@ function startResendCountdown() {
   resendTimer = setInterval(() => { left -= 1; counter.textContent = left > 0 ? `(${left}s)` : ''; if (left <= 0) { clearInterval(resendTimer); btn.disabled = false; } }, 1000);
 }
 
-async function pedirResetCode() {
+async function pedirResetCode(isResend=false) {
   const email = document.getElementById('reset-email').value.trim();
-  try { await apiPost('/auth/local/password/request-code', { email }); document.getElementById('reset-final-fields').classList.remove('hidden'); toast('Si la cuenta existe, recibirás un código'); } catch (e) { toast(e.error || 'No se pudo enviar el código'); }
+  const btn = document.getElementById('reset-request-btn');
+  if (!email) return toast('Ingresa tu correo electrónico');
+  try {
+    if (btn) { btn.disabled=true; btn.textContent='Enviando...'; }
+    await apiPost('/auth/local/password/request-code', { email });
+    document.getElementById('reset-final-fields').classList.remove('hidden');
+    startResetResendCountdown();
+    toast('Si la cuenta existe, recibirás un código');
+    setTimeout(() => document.getElementById('reset-code')?.focus(), 30);
+  } catch (e) { toast(e.error || 'No se pudo enviar el código'); }
+  finally { if (btn) { btn.disabled=false; btn.textContent='Enviar código'; } }
 }
 
 async function restablecerPassword() {
+  const email=document.getElementById('reset-email').value.trim();
+  const code=document.getElementById('reset-code').value.trim();
+  const password=document.getElementById('reset-password').value;
+  const confirm=document.getElementById('reset-password-confirm').value;
+  const btn=document.getElementById('reset-submit-btn');
+  if (password !== confirm) return toast('Las contraseñas no coinciden');
   try {
-    await apiPost('/auth/local/password/reset', { email: document.getElementById('reset-email').value.trim(), code: document.getElementById('reset-code').value.trim(), newPassword: document.getElementById('reset-password').value });
-    toast('Contraseña actualizada');
+    if(btn){btn.disabled=true;btn.textContent='Actualizando...';}
+    await apiPost('/auth/local/password/reset', { email, code, newPassword: password });
+    clearInterval(resetResendTimer);
+    toast('Contraseña actualizada. Ya puedes iniciar sesión.');
     showLocalLogin();
+    const loginEmail=document.getElementById('login-email-local'); if(loginEmail) loginEmail.value=email;
   } catch (e) { toast(e.error || 'No se pudo cambiar la contraseña'); }
+  finally { if(btn){btn.disabled=false;btn.textContent='Cambiar contraseña';} }
 }
 
 async function afterLogin() {

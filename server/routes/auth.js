@@ -591,6 +591,12 @@ router.post('/local/password/reset', async (req, res) => {
       await record.save();
       return res.status(400).json({ error: 'Código incorrecto' });
     }
+    const consumed = await EmailCode.findOneAndUpdate(
+      { _id: record._id, used: false, codeHash: hashCode(email, code), expiresAt: { $gt: new Date() } },
+      { $set: { used: true }, $unset: { passwordHash: 1 } },
+      { new: true }
+    );
+    if (!consumed) return res.status(409).json({ error: 'El código ya fue utilizado, expiró o dejó de ser válido. Solicita uno nuevo.' });
     const user = await User.findOne({ email }).select('+passwordHash');
     if (!user) return res.status(404).json({ error: 'Cuenta no encontrada' });
     user.passwordHash = await bcrypt.hash(newPassword, 12);
@@ -601,12 +607,6 @@ router.post('/local/password/reset', async (req, res) => {
     if (!user.authProviders.some(p => p.provider === 'local' && p.providerId === email)) user.authProviders.push({ provider: 'local', providerId: email });
     user.emailVerified = true;
     await user.save();
-    const consumed = await EmailCode.findOneAndUpdate(
-      { _id: record._id, used: false },
-      { $set: { used: true }, $unset: { passwordHash: 1 } },
-      { new: true }
-    );
-    if (!consumed) return res.status(409).json({ error: 'El código ya fue utilizado. Solicita uno nuevo.' });
     await recordSecurityEvent({ req, user, email, type: 'password_reset', outcome: 'success' });
     res.json({ ok: true });
   } catch (err) {
