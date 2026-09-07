@@ -391,7 +391,7 @@ async function initSesion() {
   if (params.get('admin') === '1' && !currentUser) setTimeout(() => openLoginModal(), 0);
   if (params.get('admin') === '1' && isStaffUser()) { window.location.href = 'admin.html'; return; }
   if (params.get('login') === 'exitoso' && isPrivilegedStaffLawyer()) setTimeout(() => switchView('abogado'), 0);
-  if ((params.get('login') === 'elegir_rol' || params.get('login') === 'perfil_abogado') && currentUser) {
+  if ((params.get('login') === 'elegir_rol' || params.get('login') === 'perfil_abogado') && currentUser && currentUser.role === 'sin_definir') {
     const modal = document.getElementById('role-modal');
     modal?.classList.remove('hidden');
     if (params.get('login') === 'perfil_abogado') {
@@ -407,6 +407,13 @@ async function initSesion() {
   }
   if (params.get('login') === '2fa' && !currentUser) { openLoginModal(); showLogin2FA(); }
   if (params.get('login') === '2fa_required') toast('Esta cuenta administrativa debe activar 2FA antes de continuar.');
+  if (params.get('login') || params.get('portal')) {
+    params.delete('login');
+    params.delete('portal');
+    const rest = params.toString();
+    const cleanUrl = `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`;
+    history.replaceState({}, '', cleanUrl);
+  }
   if (adminPortalMode) {
     activarBannerAdminPortal(currentUser?.role);
     if (currentUser?.role === 'cliente') setTimeout(() => switchView('cliente'), 0);
