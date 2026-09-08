@@ -56,7 +56,10 @@ const userSchema = new mongoose.Schema({
     originalName: { type: String, default: '' },
     mimeType: { type: String, default: '' },
     uploadedAt: Date,
-    storagePath: { type: String, default: '' }
+    storagePath: { type: String, default: '' },
+    data: { type: Buffer, select: false },
+    size: { type: Number, default: 0 },
+    sha256: { type: String, default: '' }
   },
   verified: { type: Boolean, default: false },
   verificationStatus: { type: String, enum: ['not_submitted', 'pending', 'verified', 'rejected'], default: 'not_submitted' },

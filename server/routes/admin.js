@@ -277,8 +277,13 @@ router.post('/rechazar/:id', requireStaffPermission('verification_manage'), asyn
 });
 
 router.get('/abogados/:id/documento', requireStaffPermission('verification_manage'), async (req, res) => {
-  const user = await User.findOne({ _id: req.params.id, role: 'abogado' });
+  const user = await User.findOne({ _id: req.params.id, role: 'abogado' }).select('+titleDocument.data');
   if (!user) return res.status(404).json({ error: 'Documento no encontrado' });
+  if (user.titleDocument?.data?.length) {
+    res.type(user.titleDocument?.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(user.titleDocument?.originalName || 'certificado')}"`);
+    return res.send(user.titleDocument.data);
+  }
   const privateBase = path.resolve(__dirname, '..', 'private_uploads', 'lawyer-titles');
   const oldBase = path.resolve(__dirname, '..', 'uploads', 'lawyer-titles');
   let absolute = user.titleDocument?.storagePath ? path.resolve(user.titleDocument.storagePath) : '';

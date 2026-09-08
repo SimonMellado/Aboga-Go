@@ -2,7 +2,7 @@
 const cron = require('node-cron');
 const User = require('../models/User');
 const CreditTransaction = require('../models/CreditTransaction');
-const { PLANS, oneclickChargeTx, oneclickCommerceCode, transbankEnabled } = require('../config/transbank');
+const { PLANS, oneclickChargeTx, oneclickCommerceCode, oneclickEnabled } = require('../config/transbank');
 
 let running = false;
 
@@ -13,7 +13,7 @@ async function renovarPlanesVencidos() {
     const now = new Date();
     await User.updateMany({ 'premium.active': true, 'premium.planEnd': { $lte: now }, $or: [{ 'premium.autoRenew': false }, { 'oneclick.inscribed': { $ne: true } }] }, { $set: { 'premium.active': false }, $unset: { 'premium.renewalLockUntil': 1 } });
 
-    if (process.env.NODE_ENV === 'production' && !transbankEnabled()) {
+    if (process.env.NODE_ENV === 'production' && !oneclickEnabled()) {
       await User.updateMany({ 'premium.active': true, 'premium.planEnd': { $lte: now }, 'premium.autoRenew': { $ne: false }, 'oneclick.inscribed': true }, { $set: { 'premium.active': false }, $unset: { 'premium.renewalLockUntil': 1 } });
       return { transbankDisabled: true };
     }
