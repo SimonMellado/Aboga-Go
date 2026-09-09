@@ -20,7 +20,7 @@ const lawyerProfileSchema = new mongoose.Schema({
   titleNumber: { type: String, trim: true, maxlength: 120, default: '' },
   serviceModes: { type: [String], default: [] },
   professionalUrl: { type: String, trim: true, maxlength: 300, default: '' },
-  phone: { type: String, trim: true, maxlength: 220, default: '', set: encryptString, get: decryptString },
+  phone: { type: String, trim: true, maxlength: 220, default: '', set: v => encryptString(v), get: v => decryptString(v) },
   profileViews: { type: Number, default: 0 }
 }, { _id: false });
 
@@ -48,7 +48,7 @@ const userSchema = new mongoose.Schema({
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   deletionReason: { type: String, trim: true, maxlength: 300, default: '' },
-  rut: { type: String, default: '', set: encryptString, get: decryptString },
+  rut: { type: String, default: '', set: v => encryptString(v), get: v => decryptString(v) },
   rutNormalized: { type: String, default: undefined },
   tituloDocUrl: String,
   titleDocument: {
