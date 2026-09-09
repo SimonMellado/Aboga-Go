@@ -413,27 +413,46 @@ function showLegacyLawyerOnboarding() {
   modal.querySelector('.modal-copy')?.replaceChildren(document.createTextNode('Tu cuenta de abogado ya existe. Antes de continuar al Portal abogado, completa los antecedentes que faltan en este formulario.'));
   mostrarFormAbogado();
   prefillLegacyLawyerForm();
+  restoreLegacyLawyerDraft();
   const button = modal.querySelector('#role-abogado-form button[onclick*="elegirRol"]');
   if (button) { button.textContent = 'Guardar antecedentes y continuar'; button.onclick = () => guardarAntecedentesAbogadoAntiguo(); }
   return true;
 }
+function legacyLawyerDraft() {
+  try { return JSON.parse(localStorage.getItem('abogago_lawyer_profile_draft') || '{}'); } catch (_) { return {}; }
+}
+function saveLegacyLawyerDraft() {
+  try { localStorage.setItem('abogago_lawyer_profile_draft', JSON.stringify(lawyerPayloadFrom('role'))); } catch (_) {}
+}
+function clearLegacyLawyerDraft() { try { localStorage.removeItem('abogago_lawyer_profile_draft'); } catch (_) {} }
+function restoreLegacyLawyerDraft() {
+  const draft = legacyLawyerDraft();
+  if (!draft || !draft.lawyerProfile) return;
+  const p = draft.lawyerProfile || {};
+  const values = { 'role-rut': draft.rut || '', 'role-phone': p.phone || '', 'role-region': p.region || '', 'role-comuna': p.comuna || '', 'role-university': p.university || '', 'role-title-year': p.titleYear || '', 'role-title-number': p.titleNumber || '', 'role-specialties': Array.isArray(p.specialties) ? p.specialties.join(', ') : '' };
+  Object.entries(values).forEach(([id, value]) => { const el = document.getElementById(id); if (el && !el.value) el.value = value; });
+  const modes = Array.isArray(p.serviceModes) ? p.serviceModes.map(x => String(x).toLowerCase()) : [];
+  if (modes.length) { const online = document.getElementById('role-mode-online'); const presencial = document.getElementById('role-mode-presencial'); if (online) online.checked = modes.includes('online'); if (presencial) presencial.checked = modes.includes('presencial'); }
+}
 async function guardarAntecedentesAbogadoAntiguo() {
   const payload = lawyerPayloadFrom('role');
-  if (!payload.rut || !payload.lawyerProfile.phone || !payload.lawyerProfile.region || !payload.lawyerProfile.comuna || !payload.lawyerProfile.university || !payload.lawyerProfile.titleYear || !payload.lawyerProfile.specialties.length || !payload.lawyerProfile.serviceModes.length) return toast('Completa RUT, teléfono, región, comuna, universidad, año, especialidades y modalidad de atención.');
+  if (!payload.rut || !payload.lawyerProfile.phone || !payload.lawyerProfile.region || !payload.lawyerProfile.comuna || !payload.lawyerProfile.university || !payload.lawyerProfile.titleYear || !payload.lawyerProfile.specialties.length || !payload.lawyerProfile.serviceModes.length) { saveLegacyLawyerDraft(); return toast('Completa RUT, teléfono, región, comuna, universidad, año, especialidades y modalidad de atención. Tus datos quedan guardados como borrador.'); }
   if (!document.getElementById('role-lawyer-declaration')?.checked) return toast('Debes aceptar la declaración profesional');
+  saveLegacyLawyerDraft();
+  const file = document.getElementById('role-doc-file')?.files?.[0];
   try {
-    const data = await apiPatch('/account/profile', {
-      firstName: currentUser.firstName || '',
-      lastName: currentUser.lastName || '',
-      rut: payload.rut,
-      lawyerProfile: payload.lawyerProfile
-    });
+    const data = await apiPatch('/account/profile', { firstName: currentUser.firstName || '', lastName: currentUser.lastName || '', rut: payload.rut, lawyerProfile: payload.lawyerProfile });
     currentUser = data.user;
+    if (file) {
+      const uploaded = await uploadLawyerDocument('role-doc-file');
+      currentUser = uploaded.user;
+    }
+    clearLegacyLawyerDraft();
     document.getElementById('role-modal')?.classList.add('hidden');
     actualizarNavSesion();
-    toast('Antecedentes guardados. Ya puedes continuar al Portal abogado.');
+    toast(file ? 'Antecedentes y documento guardados. Ya puedes continuar al Portal abogado.' : 'Antecedentes guardados. Ya puedes continuar al Portal abogado.');
     switchView('abogado');
-  } catch (e) { toast(e.error || 'No se pudieron guardar tus antecedentes'); }
+  } catch (e) { saveLegacyLawyerDraft(); toast(e.error || 'No se pudieron guardar tus antecedentes. El borrador quedó guardado en este dispositivo.'); }
 }
 
 async function initSesion() {
@@ -885,29 +904,46 @@ let selectedPlanPaymentMethod = 'flow';
 let activeTransferPaymentId = null;
 
 function setCreditPaymentMethod(method) {
-  if (method === 'webpay') return toast('Webpay / Transbank estará disponible próximamente.');
+  if (method === 'webpay') { selectedCreditPaymentMethod = method; } else { selectedCreditPaymentMethod = method; }
   selectedCreditPaymentMethod = method;
   document.querySelectorAll('[data-credit-method]').forEach(b => b.classList.toggle('active', b.dataset.creditMethod === method));
   const btn = document.getElementById('credit-pay-btn');
-  if (btn) btn.textContent = method === 'transfer' ? 'Generar datos para transferencia' : method === 'flow' ? 'Pagar con Flow' : 'Pagar con tarjeta · Webpay';
+  if (btn) btn.textContent = method === 'transfer' ? 'Generar datos para transferencia' : method === 'flow' ? 'Pagar con Flow' : 'Pagar con Webpay';
   document.getElementById('credit-transfer-box')?.classList.toggle('hidden', method !== 'transfer');
 }
 function setPlanPaymentMethod(method) {
-  if (method === 'oneclick') return toast('Transbank Oneclick estará disponible próximamente.');
+  if (method === 'oneclick') return toast('Transbank Oneclick está deshabilitado. Usa Webpay, Flow o transferencia.');
   selectedPlanPaymentMethod = method;
   document.querySelectorAll('[data-plan-method]').forEach(b => b.classList.toggle('active', b.dataset.planMethod === method));
   const btn = document.getElementById('plan-continue-btn');
   const plan = precios.plans?.[selectedPlan];
-  if (btn && plan) btn.textContent = method === 'transfer' ? `Transferir por ${plan.name}` : method === 'flow' ? `Pagar ${plan.name} con Flow` : `Continuar con ${plan.name}`;
+  if (btn && plan) btn.textContent = method === 'transfer' ? `Transferir por ${plan.name}` : method === 'flow' ? `Pagar ${plan.name} con Flow` : `Pagar ${plan.name} con Webpay`;
   document.getElementById('plan-transfer-box')?.classList.toggle('hidden', method !== 'transfer');
 }
 
 async function comprarCreditosDesdePanel() {
-  if (selectedCreditPaymentMethod === 'webpay') return toast('Webpay / Transbank estará disponible próximamente.');
+  if (selectedCreditPaymentMethod === 'webpay') return iniciarWebpay('credit_pack', selectedCreditPack);
   if (selectedCreditPaymentMethod === 'transfer') return iniciarTransferencia('credit_pack', selectedCreditPack, 'credit-transfer-box');
   if (selectedCreditPaymentMethod === 'flow') return iniciarFlow('credit_pack', selectedCreditPack);
   try { const { url, token } = await apiPost('/payments/credits/init', { packId: selectedCreditPack, country: 'CL' }); postRedirect(url, { token_ws: token }); }
   catch (e) { toast(e.error || 'No se pudo iniciar el pago'); }
+}
+
+async function iniciarWebpay(kind, productId) {
+  if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan o créditos.');
+  try {
+    const endpoint = kind === 'plan' ? '/payments/plans/init' : '/payments/credits/init';
+    const payload = kind === 'plan' ? { plan: productId, country: 'CL' } : { packId: productId, country: 'CL' };
+    const data = await apiPost(endpoint, payload);
+    if (!data?.url || !data?.token) throw { error: 'Webpay no entregó los datos de redirección' };
+    const catalogItem = kind === 'plan' ? precios.plans?.[productId] : precios.creditPacks?.[productId];
+    const checkoutValue = Number(catalogItem?.price || data.amount || 0);
+    try { sessionStorage.setItem('abogago_last_checkout', JSON.stringify({ kind, productId, value: checkoutValue, payment_method: 'webpay' })); } catch (_) {}
+    window.abogaTrackEvent?.('begin_checkout', { currency: 'CLP', value: checkoutValue, payment_method: 'webpay', product_kind: kind, product_id: productId });
+    postRedirect(data.url, { token_ws: data.token });
+  } catch (e) {
+    toast(e.error || 'No se pudo iniciar el pago con Webpay');
+  }
 }
 
 async function iniciarFlow(kind, productId) {
@@ -958,7 +994,7 @@ async function subirComprobanteTransferencia(paymentId) {
 }
 function renderPremiumCard() { const box = document.getElementById('premium-status'); const badge = document.getElementById('account-plan-badge'); if (!box) return; const p = currentUser.premium; const active = Boolean(p?.active && p?.planEnd && new Date(p.planEnd).getTime() > Date.now()); if (active) { badge.textContent = p.tier === 'pro' ? '🏆 Premium Pro' : '★ Premium'; badge.className = `plan-badge ${p.tier === 'pro' ? 'plan-pro' : 'plan-premium'}`; const renewal = p.autoRenew === false ? `Finaliza: ${fmtDate(p.planEnd)} · sin renovación automática.` : `Próxima renovación: ${fmtDate(p.planEnd)}.`; box.innerHTML = `<div class="premium-active-box"><strong>Plan activo</strong><p>Prioridad de ${precios.priorityHours || 24} horas. ${renewal}</p>${p.autoRenew === false ? '' : '<button class="btn btn-outline btn-sm btn-dark-outline" onclick="cancelarRenovacion()">Cancelar renovación automática</button>'}</div>`; } else { badge.textContent = 'Plan gratuito'; badge.className = 'plan-badge plan-standard'; box.innerHTML = '<div class="premium-smallprint">Las oportunidades nuevas permanecen reservadas durante 24 horas. Si nadie las toma, se habilitan gratis para abogados verificados.</div>'; } }
 async function cancelarRenovacion() { if (!confirm('¿Deseas desactivar la renovación automática? Mantendrás Premium hasta la fecha de término.')) return; try { const data = await apiPost('/payments/oneclick/plan/cancelar-renovacion', {}); currentUser = await getCurrentUser(); toast(data.message || 'Renovación automática desactivada'); renderPremiumCard(); } catch (e) { toast(e.error || 'No se pudo cancelar la renovación'); } }
-async function contratarPremium(tier = selectedPlan) { if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan.'); const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'oneclick') return toast('Transbank Oneclick estará disponible próximamente.'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); if (selectedPlanPaymentMethod === 'flow') return iniciarFlow('plan', tier); try { if (currentUser.oneclick?.inscribed) { const data = await apiPost('/payments/oneclick/plan/activar', { plan: tier, country: 'CL' }); currentUser = data.user; toast(`${plan.name} activado`); cargarPortalAbogado(); } else { const { url, token } = await apiPost('/payments/oneclick/inscribir', { plan: tier, country: 'CL' }); postRedirect(url, { TBK_TOKEN: token }); } } catch (e) { toast(e.error || 'No se pudo activar el plan'); } }
+async function contratarPremium(tier = selectedPlan) { if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan.'); const plan = precios.plans?.[tier]; if (!plan) return toast('Plan no válido'); if (selectedPlanPaymentMethod === 'oneclick') return toast('Transbank Oneclick está deshabilitado.'); if (selectedPlanPaymentMethod === 'transfer') return iniciarTransferencia('plan', tier, 'plan-transfer-box'); if (selectedPlanPaymentMethod === 'flow') return iniciarFlow('plan', tier); if (selectedPlanPaymentMethod === 'webpay') return iniciarWebpay('plan', tier); }
 function irAPagos(tipo = 'creditos') {
   if (adminPortalMode) return toast('Los pagos reales están deshabilitados en modo administración. Usa Panel admin → Usuarios para ajustar el plan o créditos.');
   if (!currentUser) return openLoginModal();

@@ -18,9 +18,11 @@ async function apiFetch(path, options = {}) {
     const headers = new Headers(options.headers || {});
     const adminToken = getAdminPortalToken();
     if (adminToken) headers.set('X-Admin-Portal-Token', adminToken);
-    return await fetch(API_BASE + path, { credentials:'include', ...options, headers });
+    const response = await fetch(API_BASE + path, { credentials:'include', ...options, headers });
+    return response;
   } catch (error) {
-    throw { error: 'No se pudo conectar con ABOGA GO. Revisa que el backend de Render esté activo y que Cloudflare esté usando la URL correcta de la API.' };
+    const detail = error?.message ? ` (${error.message})` : '';
+    throw { error: `No se pudo conectar con ABOGA GO${detail}. El backend responde, pero el navegador está bloqueando o no puede completar esta solicitud. Revisa CORS/Cloudflare y vuelve a intentar.` };
   }
 }
 

@@ -32,8 +32,12 @@ function requireProductionEnv() {
     if (flowMissing.length) throw new Error(`Flow está habilitado y faltan variables: ${flowMissing.join(', ')}`);
   }
   if (String(process.env.TRANSBANK_ENABLED || 'false').toLowerCase() === 'true') {
-    const tbkMissing = ['TBK_WEBPAY_COMMERCE_CODE','TBK_WEBPAY_API_KEY','TBK_ONECLICK_COMMERCE_CODE','TBK_ONECLICK_API_KEY'].filter(k => !String(process.env[k] || '').trim());
-    if (tbkMissing.length) throw new Error(`Transbank está habilitado y faltan variables: ${tbkMissing.join(', ')}`);
+    const tbkMissing = ['TBK_WEBPAY_COMMERCE_CODE','TBK_WEBPAY_API_KEY'].filter(k => !String(process.env[k] || '').trim());
+    if (tbkMissing.length) throw new Error(`Webpay está habilitado y faltan variables: ${tbkMissing.join(', ')}`);
+  }
+  if (String(process.env.ONECLICK_ENABLED || 'false').toLowerCase() === 'true') {
+    const oneclickMissing = ['TBK_ONECLICK_COMMERCE_CODE','TBK_ONECLICK_API_KEY'].filter(k => !String(process.env[k] || '').trim());
+    if (oneclickMissing.length) throw new Error(`Oneclick está habilitado y faltan variables: ${oneclickMissing.join(', ')}`);
   }
 }
 
@@ -63,13 +67,19 @@ const allowedOrigins = new Set([
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' }, hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: false } : false }));
 app.use(compression());
-app.use(cors({
+const corsOptions = {
   origin(origin, callback) {
     if (!origin || allowedOrigins.has(origin)) return callback(null, true);
     return callback(new Error('Origen no permitido por CORS'));
   },
-  credentials: true
-}));
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Portal-Token'],
+  optionsSuccessStatus: 204,
+  maxAge: 86400
+};
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 function hasUnsafeKeys(value, depth = 0) {
@@ -126,7 +136,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/account', require('./routes/account'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '7.1.3' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'ABOGA GO API', version: '7.1.17' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Ruta no encontrada' }));
 app.use((err, req, res, next) => {
   console.error('API error:', err.message);

@@ -13,7 +13,7 @@ const ManualPayment = require('../models/ManualPayment');
 const Notification = require('../models/Notification');
 const {
   CREDIT_PRICE, CREDIT_PACKS, PLANS, matchesCatalogProduct,
-  webpayPlusTx, oneclickInscriptionTx, oneclickChargeTx, oneclickCommerceCode, transbankEnabled,
+  webpayPlusTx, oneclickInscriptionTx, oneclickChargeTx, oneclickCommerceCode, transbankEnabled, oneclickEnabled,
 } = require('../config/transbank');
 const { flowConfig, createFlowPayment, getFlowPaymentStatus } = require('../config/flow');
 
@@ -44,7 +44,9 @@ function providerVerificationFromWebpay(commit) {
     cardLast4: String(commit?.card_detail?.card_number || '').slice(-4),
     installmentsNumber: Number.isFinite(Number(commit?.installments_number)) ? Number(commit.installments_number) : undefined,
     transactionDate: commit?.transaction_date ? new Date(commit.transaction_date) : new Date(),
-    amount: Number.isFinite(Number(commit?.amount)) ? Number(commit.amount) : undefined
+    amount: Number.isFinite(Number(commit?.amount)) ? Number(commit.amount) : undefined,
+    providerOrder: String(commit?.buy_order || ''),
+    sessionId: String(commit?.session_id || '')
   };
 }
 
@@ -77,7 +79,12 @@ function transferBankData() {
 
 
 function requireTransbank(req, res, next) {
-  if (!transbankEnabled()) return res.status(503).json({ error: 'Webpay / Transbank estará disponible próximamente. Usa Flow o transferencia.' });
+  if (!transbankEnabled()) return res.status(503).json({ error: 'Webpay está temporalmente deshabilitado. Usa Flow o transferencia.' });
+  next();
+}
+
+function requireOneclick(req, res, next) {
+  if (!oneclickEnabled()) return res.status(503).json({ error: 'Transbank Oneclick no está habilitado en esta versión.' });
   next();
 }
 
@@ -190,8 +197,8 @@ router.get('/metodos', (_req, res) => {
   res.json({
     country: 'CL',
     methods: {
-      webpay: { enabled: false, comingSoon: true, label: 'Webpay · Próximamente', provider: 'Transbank Webpay', country: 'CL' },
-      oneclick: { enabled: false, comingSoon: true, label: 'Oneclick · Próximamente', provider: 'Transbank Oneclick', country: 'CL' },
+      webpay: { enabled: transbankEnabled(), comingSoon: !transbankEnabled(), label: transbankEnabled() ? 'Webpay Plus' : 'Webpay · Próximamente', provider: 'Transbank Webpay Plus', country: 'CL' },
+      oneclick: { enabled: oneclickEnabled(), comingSoon: !oneclickEnabled(), label: oneclickEnabled() ? 'Oneclick' : 'Oneclick · Próximamente', provider: 'Transbank Oneclick', country: 'CL' },
       flow: { enabled: flowConfig().configured, label: 'Flow', provider: 'Flow Chile', country: 'CL', automaticConfirmation: true },
       transfer: { enabled: transferBankData().configured, label: 'Transferencia bancaria', country: 'CL', bank: transferBankData(), automaticReconciliation: transferAutomationConfigured(), rutMatchRequired: true }
     }
@@ -496,7 +503,9 @@ router.all('/credits/return', async (req, res) => {
     const productId = record.productId || Object.values(CREDIT_PACKS).find(p => Number(p.price) === Number(record.clpAmount) && Number(p.credits) === Number(record.credits))?.id;
     const catalogOk = matchesCatalogProduct('credit_pack', productId, record.clpAmount, record.credits);
     const providerAmountOk = Number(commit.amount) === Number(record.clpAmount);
-    if (!catalogOk || !providerAmountOk || commit.status !== 'AUTHORIZED' || Number(commit.response_code) !== 0) {
+    const providerOrderOk = !commit.buy_order || String(commit.buy_order) === String(record.buyOrder);
+    const providerSessionOk = !commit.session_id || String(commit.session_id) === String(record.user);
+    if (!catalogOk || !providerAmountOk || !providerOrderOk || !providerSessionOk || commit.status !== 'AUTHORIZED' || Number(commit.response_code) !== 0) {
       await CreditTransaction.updateOne({ _id: record._id, status: 'pending' }, { $set: { status: 'failed', provider: 'webpay', providerVerification: verification } });
       return res.redirect(`${process.env.FRONTEND_URL}/index.html?pago=fallido`);
     }
@@ -517,7 +526,102 @@ router.all('/credits/return', async (req, res) => {
   }
 });
 
-router.post('/oneclick/inscribir', requireAuth, requireRole('abogado'), requireChile, requireTransbank, async (req, res) => {
+router.post('/plans/init', requireAuth, requireRole('abogado'), requireChile, requireTransbank, async (req, res) => {
+  const plan = getPlan(req.body.plan);
+  if (!plan) return res.status(400).json({ error: 'Plan no válido' });
+
+  const amount = plan.price;
+  const buyOrder = 'PLAN-' + plan.id.toUpperCase() + '-' + Date.now();
+  const sessionId = String(req.user._id);
+  const returnUrl = `${process.env.BACKEND_URL}/api/payments/plans/return`;
+
+  try {
+    const tx = webpayPlusTx();
+    const response = await tx.create(buyOrder, sessionId, amount, returnUrl);
+    await CreditTransaction.create({
+      user: req.user._id,
+      kind: 'plan_inicial',
+      plan: plan.id,
+      productId: plan.id,
+      credits: plan.credits,
+      clpAmount: amount,
+      buyOrder,
+      webpayToken: response.token,
+      status: 'pending',
+      provider: 'webpay',
+    });
+    res.json({ url: response.url, token: response.token, plan });
+  } catch (err) {
+    console.error('Error creando transacción Webpay para plan:', err);
+    res.status(500).json({ error: 'No se pudo iniciar el pago con Webpay' });
+  }
+});
+
+router.all('/plans/return', async (req, res) => {
+  const token = String(req.body?.token_ws || req.query?.token_ws || '').trim();
+  const failUrl = `${process.env.FRONTEND_URL}/index.html?plan=fallido`;
+  if (!token) return res.redirect(failUrl);
+
+  try {
+    const record = await CreditTransaction.findOne({ webpayToken: token });
+    if (!record) return res.redirect(failUrl);
+    if (record.status === 'approved') return res.redirect(`${process.env.FRONTEND_URL}/index.html?plan=exitoso&tier=${encodeURIComponent(record.productId || record.plan || '')}`);
+
+    const tx = webpayPlusTx();
+    const commit = await tx.commit(token);
+    const verification = providerVerificationFromWebpay(commit);
+    const productId = record.productId || record.plan;
+    const catalogOk = matchesCatalogProduct('plan', productId, record.clpAmount, record.credits);
+    const providerAmountOk = Number(commit.amount) === Number(record.clpAmount);
+    const providerOrderOk = !commit.buy_order || String(commit.buy_order) === String(record.buyOrder);
+    const providerSessionOk = !commit.session_id || String(commit.session_id) === String(record.user);
+
+    if (!catalogOk || !providerAmountOk || !providerOrderOk || !providerSessionOk || commit.status !== 'AUTHORIZED' || Number(commit.response_code) !== 0) {
+      await CreditTransaction.updateOne({ _id: record._id, status: 'pending' }, { $set: { status: 'failed', provider: 'webpay', providerVerification: verification } });
+      return res.redirect(failUrl);
+    }
+
+    const claimed = await CreditTransaction.findOneAndUpdate(
+      { _id: record._id, status: 'pending' },
+      { $set: { status: 'processing', provider: 'webpay', providerVerification: verification } },
+      { new: true }
+    );
+    if (!claimed) {
+      const fresh = await CreditTransaction.findById(record._id);
+      return res.redirect(`${process.env.FRONTEND_URL}/index.html?plan=${fresh?.status === 'approved' ? 'exitoso' : 'procesando'}`);
+    }
+
+    const user = await User.findById(claimed.user);
+    if (!user || user.role !== 'abogado') {
+      await CreditTransaction.updateOne({ _id: claimed._id, status: 'processing' }, { $set: { status: 'failed' } });
+      return res.redirect(failUrl);
+    }
+
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + 30);
+    user.credits += claimed.credits;
+    user.premium = {
+      active: true,
+      tier: productId,
+      planStart: now,
+      planEnd: end,
+      autoRenew: false,
+    };
+    await user.save();
+
+    claimed.status = 'approved';
+    claimed.provider = 'webpay';
+    claimed.providerVerification = verification;
+    await claimed.save();
+    return res.redirect(`${process.env.FRONTEND_URL}/index.html?plan=exitoso&tier=${encodeURIComponent(productId)}`);
+  } catch (err) {
+    console.error('Error confirmando pago Webpay de plan:', err);
+    return res.redirect(failUrl);
+  }
+});
+
+router.post('/oneclick/inscribir', requireAuth, requireRole('abogado'), requireChile, requireOneclick, async (req, res) => {
   const plan = getPlan(req.body.plan);
   if (!plan) return res.status(400).json({ error: 'Plan no válido' });
 
@@ -592,7 +696,7 @@ router.all('/oneclick/inscribir/return', async (req, res) => {
   }
 });
 
-router.post('/oneclick/plan/activar', requireAuth, requireRole('abogado'), requireChile, requireTransbank, async (req, res) => {
+router.post('/oneclick/plan/activar', requireAuth, requireRole('abogado'), requireChile, requireOneclick, async (req, res) => {
   const user = await User.findById(req.user._id);
   const plan = getPlan(req.body.plan);
   if (!plan) return res.status(400).json({ error: 'Plan no válido' });

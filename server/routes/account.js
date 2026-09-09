@@ -34,7 +34,7 @@ function cleanProfessionalUrl(v) {
     return ['https:', 'http:'].includes(u.protocol) ? u.toString() : '';
   } catch (_) { return ''; }
 }
-function safeUser(user) { const o = user.toObject({ getters: true }); delete o.passwordHash; delete o.providerId; if (o.titleDocument) delete o.titleDocument.storagePath; delete o.rutNormalized; o.security = { lastLoginAt: o.security?.lastLoginAt, passwordChangedAt: o.security?.passwordChangedAt, twoFactorEnabled: Boolean(o.security?.twoFactor?.enabled), twoFactorEnabledAt: o.security?.twoFactor?.enabledAt }; o.oneclick = { inscribed: Boolean(o.oneclick?.inscribed) }; return o; }
+function safeUser(user) { const o = user.toObject({ getters: true }); delete o.passwordHash; delete o.titleDocument?.data; delete o.providerId; if (o.titleDocument) delete o.titleDocument.storagePath; delete o.rutNormalized; o.security = { lastLoginAt: o.security?.lastLoginAt, passwordChangedAt: o.security?.passwordChangedAt, twoFactorEnabled: Boolean(o.security?.twoFactor?.enabled), twoFactorEnabledAt: o.security?.twoFactor?.enabledAt }; o.oneclick = { inscribed: Boolean(o.oneclick?.inscribed) }; return o; }
 
 
 function makeRecoveryCodes(count = 10) {
@@ -82,13 +82,18 @@ router.post('/lawyer-title', requireAuth, (req, res) => {
       if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
       const url = '/api/account/lawyer-title/view';
+      const documentData = fs.readFileSync(req.file.path);
+      const sha256 = crypto.createHash('sha256').update(documentData).digest('hex');
       user.tituloDocUrl = url;
       user.titleDocument = {
         url,
         originalName: clean(req.file.originalname, 220),
         mimeType: req.file.mimetype,
         uploadedAt: new Date(),
-        storagePath: req.file.path
+        storagePath: '',
+        data: documentData,
+        size: documentData.length,
+        sha256
       };
       if (user.role === 'abogado') {
         user.verified = false;
@@ -96,6 +101,7 @@ router.post('/lawyer-title', requireAuth, (req, res) => {
         user.verificationSubmittedAt = new Date();
       }
       await user.save();
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
       res.json({ ok: true, url, user: safeUser(user) });
     } catch (e) {
       res.status(500).json({ error: 'No se pudo guardar el documento' });
@@ -106,6 +112,12 @@ router.post('/lawyer-title', requireAuth, (req, res) => {
 router.get('/lawyer-title/view', requireAuth, async (req, res) => {
   const user = await User.findById(req.user._id);
   if (!user) return res.status(404).json({ error: 'Documento no encontrado' });
+  const stored = user.titleDocument?.data;
+  if (stored && stored.length) {
+    res.type(user.titleDocument?.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(user.titleDocument?.originalName || 'certificado')}"`);
+    return res.send(stored);
+  }
   const privateBase = path.resolve(uploadDir);
   const oldBase = path.resolve(__dirname, '..', 'uploads', 'lawyer-titles');
   let absolute = user.titleDocument?.storagePath ? path.resolve(user.titleDocument.storagePath) : '';
@@ -118,7 +130,7 @@ router.get('/lawyer-title/view', requireAuth, async (req, res) => {
   if (!allowed || !fs.existsSync(absolute)) return res.status(404).json({ error: 'Documento no disponible' });
   res.type(user.titleDocument?.mimeType || 'application/octet-stream');
   res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(user.titleDocument?.originalName || 'certificado')}"`);
-  res.sendFile(absolute);
+  return res.sendFile(absolute);
 });
 
 router.patch('/profile', requireAuth, async (req, res) => {

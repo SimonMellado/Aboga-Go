@@ -66,6 +66,9 @@ async function deliver(message) {
       if (response.ok) return { devMode: false, provider: 'resend', messageId: data?.id || '' };
       const detail = data?.message || data?.error || data?.name || `HTTP ${response.status}`;
       lastError = new Error(`Resend rechazó el correo: ${detail}`);
+      lastError.resendStatus = response.status;
+      lastError.resendDetail = String(detail);
+      console.error(`[MAILER] Resend ${response.status}: ${String(detail)} | from=${cfg.fromEmail}`);
       if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) throw lastError;
     } catch (err) {
       lastError = err;
@@ -74,6 +77,8 @@ async function deliver(message) {
     await new Promise(resolve => setTimeout(resolve, 700 * attempt));
   }
   const e = new Error(`No se pudo enviar el correo con Resend: ${lastError?.message || 'error de red'}`);
+  e.resendStatus = lastError?.resendStatus || null;
+  e.resendDetail = lastError?.resendDetail || null;
   e.cause = lastError;
   throw e;
 }

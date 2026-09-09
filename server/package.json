@@ -1,6 +1,6 @@
 {
   "name": "aboga-go-api",
-  "version": "7.1.14",
+  "version": "7.1.19",
   "private": true,
   "description": "Backend ABOGA GO V7.1.5 — hardening de autenticación, límites de solicitudes, respuestas administrativas seguras y acceso robusto al Portal abogado",
   "main": "server.js",
@@ -21,7 +21,7 @@
     "passport": "^0.7.0",
     "passport-apple": "^2.0.2",
     "passport-google-oauth20": "^2.0.0",
-    "transbank-sdk": "^6.1.0",
+    "transbank-sdk": "^6.1.1",
     "bcryptjs": "^2.4.3",
     "helmet": "^8.1.0",
     "express-rate-limit": "^7.5.0",

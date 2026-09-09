@@ -37,6 +37,10 @@ function transbankEnabled() {
   return String(process.env.TRANSBANK_ENABLED || 'false').toLowerCase() === 'true';
 }
 
+function oneclickEnabled() {
+  return String(process.env.ONECLICK_ENABLED || 'false').toLowerCase() === 'true';
+}
+
 
 function webpayOptions() {
   if (isProduction && !transbankEnabled()) throw new Error('Transbank está deshabilitado');
@@ -46,7 +50,7 @@ function webpayOptions() {
 }
 
 function oneclickOptions() {
-  if (isProduction && !transbankEnabled()) throw new Error('Transbank está deshabilitado');
+  if (isProduction && !oneclickEnabled()) throw new Error('Transbank Oneclick está deshabilitado');
   if (!isProduction) return new Options(IntegrationCommerceCodes.ONECLICK_MALL, IntegrationApiKeys.WEBPAY, Environment.Integration);
   if (!process.env.TBK_ONECLICK_COMMERCE_CODE || !process.env.TBK_ONECLICK_API_KEY) throw new Error('Faltan credenciales de producción TBK_ONECLICK_COMMERCE_CODE/TBK_ONECLICK_API_KEY');
   return new Options(process.env.TBK_ONECLICK_COMMERCE_CODE, process.env.TBK_ONECLICK_API_KEY, Environment.Production);
@@ -71,4 +75,5 @@ module.exports = {
   oneclickChargeTx,
   oneclickCommerceCode,
   transbankEnabled,
+  oneclickEnabled,
 };
