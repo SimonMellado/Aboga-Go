@@ -15,6 +15,10 @@ export default {
     headers.set('X-Permitted-Cross-Domain-Policies', 'none');
     headers.set('Content-Security-Policy', CSP);
     const url = new URL(request.url);
+    const isHtmlDoc = (response.headers.get('content-type') || '').includes('text/html');
+    if (isHtmlDoc) {
+      headers.set('Cache-Control', 'no-store');
+    }
     if (url.pathname === '/admin.html') {
       headers.set('Cache-Control', 'no-store');
       headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
